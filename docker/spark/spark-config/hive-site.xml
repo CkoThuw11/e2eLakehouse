@@ -1,0 +1,41 @@
+<?xml version="1.0"?>
+<configuration>
+
+    <!-- Hive Metastore -->
+    <property>
+        <name>hive.metastore.uris</name>
+        <value>thrift://hive-metastore:9083</value>
+    </property>
+
+    <property>
+        <name>hive.metastore.warehouse.dir</name>
+        <value>s3a://warehouse/</value>
+    </property>
+
+    <!-- S3A -->
+    <property>
+        <name>fs.s3a.endpoint</name>
+        <value>http://minio:9000</value>
+    </property>
+
+    <property>
+        <name>fs.s3a.access.key</name>
+        <value>admin</value>
+    </property>
+
+    <property>
+        <name>fs.s3a.secret.key</name>
+        <value>admin123</value>
+    </property>
+
+    <property>
+        <name>fs.s3a.path.style.access</name>
+        <value>true</value>
+    </property>
+
+    <property>
+        <name>fs.s3a.impl</name>
+        <value>org.apache.hadoop.fs.s3a.S3AFileSystem</value>
+    </property>
+
+</configuration>
