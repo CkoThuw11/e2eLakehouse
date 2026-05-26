@@ -123,7 +123,8 @@ services:
 
   spark:
     build:
-      context: ./docker/spark
+      context: .
+      dockerfile: docker/spark/Dockerfile
 
     container_name: spark-lakehouse
 
@@ -147,6 +148,50 @@ services:
 
     networks:
       - data-network
+
+  spark-thrift-server:
+    build:
+      context: .
+      dockerfile: docker/spark/Dockerfile
+
+    container_name: spark-thrift-server
+
+    command: >
+      /opt/spark/bin/spark-submit
+      --class org.apache.spark.sql.hive.thriftserver.HiveThriftServer2
+      --master local[*]
+      /opt/spark/jars/spark-hive-thriftserver_2.12-3.5.0.jar
+
+    depends_on:
+      - hive-metastore
+      - minio
+
+    ports:
+      - "10000:10000"
+      - "4041:4040"
+
+    environment:
+      AWS_ACCESS_KEY_ID: ${MINIO_ACCESS_KEY}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_SECRET_KEY}
+      AWS_REGION: us-east-1
+
+    networks:
+      - data-network
+
+  dbt:
+    build:
+      context: ./docker/dbt
+      dockerfile: Dockerfile
+    image: e2e-dbt:1.11.11
+    container_name: dbt
+    volumes:
+      - ./dbt:/usr/app
+      - ./docker/dbt/start.sh:/usr/local/bin/start.sh
+    working_dir: /usr/app
+    entrypoint: ["/bin/sh", "/usr/local/bin/start.sh"]
+    networks:
+      - data-network
+
 
 networks:
   data-network:

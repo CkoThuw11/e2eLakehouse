@@ -1,0 +1,9 @@
+name: 'e2e_lakehouse'
+version: '1.0'
+config-version: 2
+profile: 'e2e_lakehouse'
+
+# Define model configurations
+models:
+  e2e_lakehouse:
+    +schema: analytics

@@ -1,0 +1,11 @@
+e2e_lakehouse:
+  outputs:
+    dev:
+      type: postgres
+      host: northwind-db
+      user: admin
+      password: admin
+      port: 5432
+      dbname: northwind
+      schema: public
+  target: dev
