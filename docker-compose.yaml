@@ -180,15 +180,17 @@ services:
 
   dbt:
     build:
-      context: ./docker/dbt
-      dockerfile: Dockerfile
-    image: e2e-dbt:1.11.11
+      context: .
+      dockerfile: docker/spark/Dockerfile
     container_name: dbt
     volumes:
       - ./dbt:/usr/app
-      - ./docker/dbt/start.sh:/usr/local/bin/start.sh
     working_dir: /usr/app
-    entrypoint: ["/bin/sh", "/usr/local/bin/start.sh"]
+    environment:
+      - PATH=/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
+      - DBT_PROFILES_DIR=/usr/app
+      - DBT_PROJECT_DIR=/usr/app
+    entrypoint: ["/usr/local/bin/start_dbt.sh"]
     networks:
       - data-network
 
