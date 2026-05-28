@@ -1,8 +1,0 @@
-version: 2
-
-sources:
-  - name: bronze
-    description: "Bronze layer sources"
-    tables:
-      - name: example_table
-        description: "Example source table in bronze layer"
