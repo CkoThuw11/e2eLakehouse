@@ -123,8 +123,7 @@ services:
 
   spark:
     build:
-      context: .
-      dockerfile: docker/spark/Dockerfile
+      context: ./docker/spark
 
     container_name: spark-lakehouse
 
@@ -148,52 +147,6 @@ services:
 
     networks:
       - data-network
-
-  spark-thrift-server:
-    build:
-      context: .
-      dockerfile: docker/spark/Dockerfile
-
-    container_name: spark-thrift-server
-
-    command: >
-      /opt/spark/bin/spark-submit
-      --class org.apache.spark.sql.hive.thriftserver.HiveThriftServer2
-      --master local[*]
-      /opt/spark/jars/spark-hive-thriftserver_2.12-3.5.0.jar
-
-    depends_on:
-      - hive-metastore
-      - minio
-
-    ports:
-      - "10000:10000"
-      - "4041:4040"
-
-    environment:
-      AWS_ACCESS_KEY_ID: ${MINIO_ACCESS_KEY}
-      AWS_SECRET_ACCESS_KEY: ${MINIO_SECRET_KEY}
-      AWS_REGION: us-east-1
-
-    networks:
-      - data-network
-
-  dbt:
-    build:
-      context: .
-      dockerfile: docker/spark/Dockerfile
-    container_name: dbt
-    volumes:
-      - ./dbt:/usr/app
-    working_dir: /usr/app
-    environment:
-      - PATH=/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
-      - DBT_PROFILES_DIR=/usr/app
-      - DBT_PROJECT_DIR=/usr/app
-    entrypoint: ["/usr/local/bin/start_dbt.sh"]
-    networks:
-      - data-network
-
 
 networks:
   data-network:
