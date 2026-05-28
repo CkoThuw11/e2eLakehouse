@@ -38,11 +38,11 @@ docker compose ps
 ```
 ### Step 4 — Create Schema
 ```bash
-docker exec -it spark-lakehouse spark-submit /opt/spark-app/create_schema.py
+docker exec -it spark-ingest spark-submit /opt/spark-app/create_schema.py
 ```
 ### Step 5 - Ingest data into Bronze layer
 ```bash
-docker exec -it spark-lakehouse spark-submit /opt/spark-app/ingest_bronze.py
+docker exec -it spark-ingest spark-submit /opt/spark-app/ingest_bronze.py
 ```
 ## MinIO Warehouse Layout
 

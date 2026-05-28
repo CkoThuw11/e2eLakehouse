@@ -1,8 +1,22 @@
 version: 2
 
 sources:
-  - name: bronze
-    description: "Bronze layer sources"
+  - name: northwind
+    description: "Northwind source tables ingested from Postgres into Bronze layer via Spark"
+    database: bronze
+    schema: northwind
     tables:
-      - name: example_table
-        description: "Example source table in bronze layer"
+      - name: orders
+      - name: order_details
+      - name: customers
+      - name: products
+      - name: employees
+      - name: categories
+      - name: suppliers
+      - name: shippers
+      - name: territories
+      - name: region
+      - name: employee_territories
+      - name: customer_demographics
+      - name: customer_customer_demo
+      - name: us_states
