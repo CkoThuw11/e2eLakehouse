@@ -1,11 +1,10 @@
-e2e_lakehouse:
+dbt_lakehouse:
+  target: dev
   outputs:
     dev:
-    thrift:
       type: spark
       method: thrift
       host: spark-thrift-server
       port: 10000
-      schema: default
-
-  target: thrift
+      schema: bronze
+      threads: 4

@@ -18,6 +18,8 @@
 │           ├── core-site.xml
 │           ├── hive-site.xml
 │           └── spark-defaults.conf
+├── dbt/
+│   └── models/
 └── docker-compose.yaml
 ```
 
@@ -80,4 +82,3 @@ Planned next steps:
 - Add Trino query engine
 - Add dbt transformations
 - Add incremental ingestion pipeline
-
