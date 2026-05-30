@@ -73,134 +73,24 @@ docker exec -it spark-ingest spark-submit /opt/spark-app/create_schema.py
 ```bash
 docker exec -it spark-ingest spark-submit /opt/spark-app/ingest_bronze.py
 ```
-
----
-
-## Web UI Access
-
-| Service | URL | Credentials |
-|---|---|---|
-| **Airflow** | [http://localhost:8081](http://localhost:8081) | `airflow` / `airflow` |
-| **MinIO Console** | [http://localhost:9001](http://localhost:9001) | `admin` / `admin123` |
-| **Trino** | [http://localhost:8090](http://localhost:8090) | any username, no password |
-| **Spark UI** | [http://localhost:4040](http://localhost:4040) | — |
-
----
-
-## Airflow — Service Healthcheck DAG
-
-This project includes an **Apache Airflow** setup with a DAG that monitors the health
-of all lakehouse services.
-
-### Overview
-
-- **DAG ID:** `service_healthcheck_dag`
-- **Schedule:** Every 10 minutes (`*/10 * * * *`)
-- **Owner:** `dw-team`
-- **Tags:** `monitoring`, `lakehouse`, `healthcheck`
-
-### What It Monitors
-
-| Task ID | Service | Method | Target |
-|---|---|---|---|
-| `check_postgres` | PostgreSQL (Northwind) | TCP socket | `northwind-db:5432` |
-| `check_minio` | MinIO | HTTP GET | `http://minio:9000/minio/health/live` |
-| `check_trino` | Trino | HTTP GET | `http://trino:8080/v1/info` |
-| `check_spark` | Spark | HTTP GET | `http://spark:8080` (fallback: `:4040`) |
-
-All 4 tasks run **in parallel** (no dependency between them).
-
-### Airflow Architecture (Docker)
-
-The Airflow stack consists of 3 containers + 1 init container:
-
-| Container | Role |
-|---|---|
-| `airflow-db` | PostgreSQL 15 — Airflow metadata database (port `5434`) |
-| `airflow-init` | Runs `airflow db migrate` + creates admin user, then exits |
-| `airflow-webserver` | Airflow Web UI on port `8081` |
-| `airflow-scheduler` | Executes DAGs on schedule |
-
-### Usage After Cloning
-
-1. **Clone the repository and start services:**
-
-   ```bash
-   git clone https://github.com/CkoThuw11/e2eLakehouse.git
-   cd e2eLakehouse
-   cp .env.example .env
-   docker compose up -d --build
-   ```
-
-2. **Wait for initialization** (~30-60 seconds for `airflow-init` to complete):
-
-   ```bash
-   # Check if airflow-init has finished
-   docker compose logs airflow-init --tail 5
-   ```
-
-3. **Access Airflow UI:**
-   - Open [http://localhost:8081](http://localhost:8081)
-   - Login: **username** = `airflow`, **password** = `airflow`
-
-4. **Enable the DAG:**
-   - The DAG is **paused by default**. Toggle the switch next to `service_healthcheck_dag` to enable it.
-   - Or enable via CLI:
-     ```bash
-     docker exec -it airflow-scheduler airflow dags unpause service_healthcheck_dag
-     ```
-
-5. **Trigger a manual run** (optional):
-
-   ```bash
-   docker exec -it airflow-scheduler airflow dags trigger service_healthcheck_dag
-   ```
-
-6. **Verify the DAG is registered:**
-
-   ```bash
-   docker exec -it airflow-scheduler airflow dags list
-   ```
-
-7. **Check for import errors:**
-
-   ```bash
-   docker exec -it airflow-scheduler airflow dags list-import-errors
-   ```
-
-### Proof of Successful Execution
-
-The DAG has been tested and runs successfully:
-
-![Airflow Healthcheck DAG running successfully](docs/images/airflow-healthcheck-dag.png)
-
-### Adding New Healthcheck Tasks
-
-To monitor additional services, edit `docker/airflow/dags/service_healthcheck_dag.py`:
-
-1. Create a new function using `check_tcp_connection()` (for database ports) or `check_http_endpoint()` (for HTTP services).
-2. Add a new `PythonOperator` task in the DAG definition.
-3. The DAG will auto-reload — no restart needed.
-
----
-
-## Trino Query Engine
-
-Trino is configured as a query engine with an **Iceberg catalog** connected to the Hive Metastore and MinIO.
-
-### Usage
-
-```bash
-# Connect to Trino CLI
-docker exec -it trino trino
-
-# Example queries
-SHOW CATALOGS;
-SHOW SCHEMAS FROM iceberg;
-SELECT * FROM iceberg.bronze.customers LIMIT 10;
+### Step 6 - Transform data into Silver layer (dbt) 
+- After the data is successfully ingested into the Bronze layer, use dbt to clean, filter, and transform the data into the Silver layer.
+- If you are running dbt via Docker Compose, execute the following command:
+```bash 
+docker  exec -it dbt dbt run
 ```
-
----
+- Note: If you are running dbt locally outside of Docker, navigate to the dbt/ directory and execute dbt run --select silver.
+#### dbt Project Structure & Logic
+Staging Models (dbt/models/staging/stg_*.sql):
+-   Purpose: Read directly from the Bronze layer.
+-   Responsibility: Perform light cleaning, column renaming (e.g., customerID to customer_id), and data type casting. Each staging model maps 1-to-1 with a source table.
+Silver Models (dbt/models/silver/*.sql):
+-   Purpose: Create integrated datasets representing the "single source of truth".
+-   Responsibility: Built on top of staging models to apply business rules and join entities.
+(Optional) If you want to run specific models (e.g., only silver), you can use the --select flag:
+ ```bash 
+docker exec -it dbt dbt run --select silver
+```
 
 ## MinIO Warehouse Layout
 
