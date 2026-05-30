@@ -1,48 +1,75 @@
-# The modern lakehouse architecture
+# The Modern Lakehouse Architecture
 
 ## Repository Structure
+
 ```
-├── REAMDE.md
-├── docker
-│   ├── hive
-│   │   └── hive-site.xml
-│   ├── postgres
-│   │   └── init.sql
-│   └── spark
-│       ├── Dockerfile
-│       ├── download_jars.sh
-│       ├── spark-app
-│       │   ├── create_schema.py
-│       │   └── ingest_bronze.py
-│       └── spark-config
-│           ├── core-site.xml
-│           ├── hive-site.xml
-│           └── spark-defaults.conf
-├── dbt/
-│   └── models/
-└── docker-compose.yaml
+e2eLakehouse/
+├── README.md
+├── .env.example
+├── docker-compose.yaml
+├── docs/
+│   └── images/
+│       └── airflow-healthcheck-dag.png
+└── docker/
+    ├── airflow/
+    │   ├── dags/
+    │   │   └── service_healthcheck_dag.py
+    │   └── logs/                            # Auto-generated, gitignored
+    ├── hive/
+    │   └── hive-site.xml
+    ├── postgres/
+    │   └── init.sql
+    ├── spark/
+    │   ├── Dockerfile
+    │   ├── download_jars.sh
+    │   ├── spark-app/
+    │   │   ├── create_schema.py
+    │   │   └── ingest_bronze.py
+    │   └── spark-config/
+    │       ├── core-site.xml
+    │       ├── hive-site.xml
+    │       └── spark-defaults.conf
+    └── trino/
+        └── catalog/
+            └── iceberg.properties
 ```
-## Getting Started
+
+---
+
+## Quick Start
+
 ### Step 1 — Configure Environment
 
 ```bash
 cp .env.example .env
 ```
-### Step 2 — Start the Pipeline
+
+### Step 2 — Start All Services
 
 ```bash
 docker compose up -d --build
 ```
+
+> **Note:** On Windows, if you encounter `not found` errors during the Spark build,
+> ensure that shell scripts (`*.sh`) have **LF** line endings (not CRLF).
+
 ### Step 3 — Verify Services
 
 ```bash
 docker compose ps
-``` 
-### Step 4 — Create Schema
+```
+
+All services should show `running` status. The `airflow-init` and `create-minio-bucket`
+containers will exit after completing their initialization tasks — this is expected.
+
+### Step 4 — Create Iceberg Schema
+
 ```bash
 docker exec -it spark-ingest spark-submit /opt/spark-app/create_schema.py
 ```
-### Step 5 - Ingest data into Bronze layer
+
+### Step 5 — Ingest Data into Bronze Layer
+
 ```bash
 docker exec -it spark-ingest spark-submit /opt/spark-app/ingest_bronze.py
 ```
@@ -72,10 +99,13 @@ Expected warehouse structure:
 ```text
 warehouse/
 ├── bronze/
+│   ├── categories/
 │   ├── customers/
+│   ├── employees/
 │   ├── orders/
+│   ├── order_details/
 │   ├── products/
-│   └── ...
+│   └── suppliers/
 ├── silver/
 └── gold/
 ```
@@ -83,14 +113,23 @@ warehouse/
 Each Iceberg table contains:
 
 ```text
-metadata/
-data/
+<table_name>/
+├── metadata/
+└── data/
 ```
-## Planned next steps:
--   Build Gold layer
--   Add CDC ingestion
--   Implement `MERGE INTO`
--   Add partition optimization
--   Add orchestration (Airflow / Dagster)
--   Add Trino query engine
--   Add incremental ingestion pipeline
+
+---
+
+## Future Improvements
+
+Planned next steps:
+
+- Build Silver layer
+- Build Gold layer
+- Add CDC ingestion
+- Implement `MERGE INTO`
+- Add partition optimization
+- ~~Add orchestration (Airflow / Dagster)~~ ✅ Airflow added
+- ~~Add Trino query engine~~ ✅ Trino added
+- Add dbt transformations
+- Add incremental ingestion pipeline
