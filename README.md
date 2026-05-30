@@ -65,13 +65,13 @@ containers will exit after completing their initialization tasks — this is exp
 ### Step 4 — Create Iceberg Schema
 
 ```bash
-docker exec -it spark-lakehouse spark-submit /opt/spark-app/create_schema.py
+docker exec -it spark-ingest spark-submit /opt/spark-app/create_schema.py
 ```
 
 ### Step 5 — Ingest Data into Bronze Layer
 
 ```bash
-docker exec -it spark-lakehouse spark-submit /opt/spark-app/ingest_bronze.py
+docker exec -it spark-ingest spark-submit /opt/spark-app/ingest_bronze.py
 ```
 
 ---
