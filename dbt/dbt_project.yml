@@ -1,8 +1,11 @@
 name: 'e2e_lakehouse'
 version: '1.0'
 config-version: 2
-profile: 'e2e_lakehouse'
+profile: 'dbt_lakehouse'
 
 models:
   e2e_lakehouse:
-    +schema: analytics
+    staging:
+      +materialized: view
+    marts:
+      +schema: analytics
