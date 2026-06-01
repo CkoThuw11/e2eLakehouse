@@ -6,6 +6,8 @@ profile: 'dbt_lakehouse'
 models:
   e2e_lakehouse:
     staging:
-      +materialized: view
+      +materialized: table
+      +schema: silver
+      +file_format: iceberg
     marts:
       +schema: analytics
