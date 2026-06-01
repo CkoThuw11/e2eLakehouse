@@ -15,6 +15,9 @@ e2eLakehouse/
     │   ├── dags/
     │   │   └── service_healthcheck_dag.py
     │   └── logs/                            # Auto-generated, gitignored
+    ├── dbt-spark/
+    │   ├── Dockerfile
+    │   └── entrypoint.sh
     ├── hive/
     │   └── hive-site.xml
     ├── postgres/
@@ -30,9 +33,22 @@ e2eLakehouse/
     │       ├── hive-site.xml
     │       └── spark-defaults.conf
     └── trino/
-        └── catalog/
-            └── iceberg.properties
+        ├── catalog/
+        │   └── iceberg.properties
+        ├── config.properties
+        ├── jvm.config
+        ├── node.properties
+        └── log.properties
 ```
+
+---
+
+## Layer Architecture
+
+| Layer | Iceberg Schema | dbt Folder | Purpose |
+|---|---|---|---|
+| Bronze | `iceberg.bronze` | — (Spark ingestion) | Raw Northwind tables |
+| Silver | `iceberg.silver` | `models/staging/` | Cleaned, typed staging models |
 
 ---
 
@@ -73,28 +89,191 @@ docker exec -it spark-ingest spark-submit /opt/spark-app/create_schema.py
 ```bash
 docker exec -it spark-ingest spark-submit /opt/spark-app/ingest_bronze.py
 ```
-### Step 6 - Transform data into Silver layer (dbt) 
-- After the data is successfully ingested into the Bronze layer, use dbt to clean, filter, and transform the data into the Silver layer.
-- If you are running dbt via Docker Compose, execute the following command:
-```bash 
-docker  exec -it dbt dbt run
+
+### Step 6 — Run dbt Transformations
+
+Run all layers in order (silver → gold → ml):
+
+```bash
+# Run a specific layer only
+docker exec -it dbt-spark dbt run --select staging
+
+# Run tests after each layer
+docker exec -it dbt-spark dbt test --select staging
 ```
-- Note: If you are running dbt locally outside of Docker, navigate to the dbt/ directory and execute dbt run --select silver.
-#### dbt Project Structure & Logic
-Staging Models (dbt/models/staging/stg_*.sql):
--   Purpose: Read directly from the Bronze layer.
--   Responsibility: Perform light cleaning, column renaming (e.g., customerID to customer_id), and data type casting. Each staging model maps 1-to-1 with a source table.
-Silver Models (dbt/models/silver/*.sql):
--   Purpose: Create integrated datasets representing the "single source of truth".
--   Responsibility: Built on top of staging models to apply business rules and join entities.
-(Optional) If you want to run specific models (e.g., only silver), you can use the --select flag:
- ```bash 
-docker exec -it dbt dbt run --select silver
+---
+
+## Web UI Access
+
+| Service | URL | Credentials |
+|---|---|---|
+| **Airflow** | [http://localhost:8081](http://localhost:8081) | `airflow` / `airflow` |
+| **MinIO Console** | [http://localhost:9001](http://localhost:9001) | `admin` / `admin123` |
+| **Trino** | [http://localhost:8090](http://localhost:8090) | any username, no password |
+| **Spark UI** | [http://localhost:4040](http://localhost:4040) | — |
+
+---
+
+## Trino Query Engine
+
+Trino is configured as a single-node coordinator with an **Iceberg catalog** connected
+to the Hive Metastore and MinIO. JVM heap is set to 512 MB for laptop-friendly usage.
+
+### Connect to Trino CLI
+
+```bash
+docker exec -it trino trino
 ```
+
+### Explore Catalogs and Schemas
+
+```sql
+-- List all catalogs
+SHOW CATALOGS;
+
+-- List all schemas in the iceberg catalog
+SHOW SCHEMAS FROM iceberg;
+
+-- List tables in each layer
+SHOW TABLES FROM iceberg.bronze;
+
+SHOW TABLES FROM iceberg.silver;
+```
+
+### Bronze Layer Queries
+
+```sql
+-- Raw ingested tables
+SELECT * FROM iceberg.bronze.order_details LIMIT 10;
+```
+
+### Silver Layer Queries
+
+```sql
+-- Cleaned and typed staging models
+SELECT * FROM iceberg.silver.stg_orders LIMIT 10;
+
+-- Verify line revenue calculation
+SELECT order_id, product_id, unit_price, quantity, discount, line_revenue
+FROM iceberg.silver.stg_order_details
+LIMIT 10;
+```
+
+---
+
+## dbt Models
+
+### Model Overview
+
+```
+dbt/models/
+├── staging/        → silver layer (7 models)
+│   ├── stg_customers.sql
+│   ├── stg_orders.sql
+│   ├── stg_order_details.sql
+│   ├── stg_products.sql
+│   ├── stg_categories.sql
+│   ├── stg_employees.sql
+│   └── stg_suppliers.sql
+```
+
+### Useful dbt Commands
+
+```bash
+# Check connection to Spark Thrift Server
+docker exec -it dbt-spark dbt debug
+
+# Compile SQL without running (inspect generated SQL)
+docker exec -it dbt-spark dbt compile
+```
+
+---
+
+## Airflow — Service Healthcheck DAG
+
+This project includes an **Apache Airflow** setup with a DAG that monitors the health
+of all lakehouse services.
+
+### Overview
+
+- **DAG ID:** `service_healthcheck_dag`
+- **Schedule:** Every 10 minutes (`*/10 * * * *`)
+- **Owner:** `dw-team`
+- **Tags:** `monitoring`, `lakehouse`, `healthcheck`
+
+### What It Monitors
+
+| Task ID | Service | Method | Target |
+|---|---|---|---|
+| `check_postgres` | PostgreSQL (Northwind) | TCP socket | `northwind-db:5432` |
+| `check_minio` | MinIO | HTTP GET | `http://minio:9000/minio/health/live` |
+| `check_trino` | Trino | HTTP GET | `http://trino:8080/v1/info` |
+| `check_spark` | Spark | HTTP GET | `http://spark:8080` (fallback: `:4040`) |
+
+All 4 tasks run **in parallel** (no dependency between them).
+
+### Airflow Architecture (Docker)
+
+| Container | Role |
+|---|---|
+| `airflow-db` | PostgreSQL 15 — Airflow metadata database (port `5434`) |
+| `airflow-init` | Runs `airflow db migrate` + creates admin user, then exits |
+| `airflow-webserver` | Airflow Web UI on port `8081` |
+| `airflow-scheduler` | Executes DAGs on schedule |
+
+### Usage After Cloning
+
+1. **Clone the repository and start services:**
+
+   ```bash
+   git clone https://github.com/CkoThuw11/e2eLakehouse.git
+   cd e2eLakehouse
+   cp .env.example .env
+   docker compose up -d --build
+   ```
+
+2. **Wait for initialization** (~30-60 seconds for `airflow-init` to complete):
+
+   ```bash
+   docker compose logs airflow-init --tail 5
+   ```
+
+3. **Access Airflow UI:**
+   - Open [http://localhost:8081](http://localhost:8081)
+   - Login: **username** = `airflow`, **password** = `airflow`
+
+4. **Enable the DAG:**
+   ```bash
+   docker exec -it airflow-scheduler airflow dags unpause service_healthcheck_dag
+   ```
+
+5. **Trigger a manual run** (optional):
+
+   ```bash
+   docker exec -it airflow-scheduler airflow dags trigger service_healthcheck_dag
+   ```
+
+6. **Verify the DAG is registered:**
+
+   ```bash
+   docker exec -it airflow-scheduler airflow dags list
+   ```
+
+7. **Check for import errors:**
+
+   ```bash
+   docker exec -it airflow-scheduler airflow dags list-import-errors
+   ```
+
+### Proof of Successful Execution
+
+![Airflow Healthcheck DAG running successfully](docs/images/airflow-healthcheck-dag.png)
+
+---
 
 ## MinIO Warehouse Layout
 
-Expected warehouse structure:
+Expected warehouse structure after all layers are populated:
 
 ```text
 warehouse/
@@ -107,7 +286,13 @@ warehouse/
 │   ├── products/
 │   └── suppliers/
 ├── silver/
-└── gold/
+│   ├── stg_customers/
+│   ├── stg_orders/
+│   ├── stg_order_details/
+│   ├── stg_products/
+│   ├── stg_categories/
+│   ├── stg_employees/
+│   └── stg_suppliers/
 ```
 
 Each Iceberg table contains:
@@ -117,19 +302,3 @@ Each Iceberg table contains:
 ├── metadata/
 └── data/
 ```
-
----
-
-## Future Improvements
-
-Planned next steps:
-
-- Build Silver layer
-- Build Gold layer
-- Add CDC ingestion
-- Implement `MERGE INTO`
-- Add partition optimization
-- ~~Add orchestration (Airflow / Dagster)~~ ✅ Airflow added
-- ~~Add Trino query engine~~ ✅ Trino added
-- Add dbt transformations
-- Add incremental ingestion pipeline
