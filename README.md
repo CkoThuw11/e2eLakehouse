@@ -96,10 +96,10 @@ Run all layers in order (silver → gold → ml):
 
 ```bash
 # Run a specific layer only
-docker exec -it dbt-spark dbt run --select staging
+docker exec -it dbt dbt run --select staging
 
 # Run tests after each layer
-docker exec -it dbt-spark dbt test --select staging
+docker exec -it dbt dbt test --select staging
 ```
 ---
 
