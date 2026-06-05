@@ -49,6 +49,7 @@ e2eLakehouse/
 |---|---|---|---|
 | Bronze | `iceberg.bronze` | — (Spark ingestion) | Raw Northwind tables |
 | Silver | `iceberg.silver` | `models/staging/` | Cleaned, typed staging models |
+| Gold | `iceberg.gold` | `models/gold/` | Kimball Star Schema for reporting / ML |
 
 ---
 
@@ -100,6 +101,10 @@ docker exec -it dbt dbt run --select staging
 
 # Run tests after each layer
 docker exec -it dbt dbt test --select staging
+
+# Run and test Gold layer (Star Schema)
+docker exec -it dbt dbt run --select gold
+docker exec -it dbt dbt test --select gold
 ```
 ---
 
@@ -293,6 +298,12 @@ warehouse/
 │   ├── stg_categories/
 │   ├── stg_employees/
 │   └── stg_suppliers/
+├── gold/
+│   ├── dim_customers/
+│   ├── dim_date/
+│   ├── dim_employees/
+│   ├── dim_products/
+│   └── fact_sales/
 ```
 
 Each Iceberg table contains:
