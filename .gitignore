@@ -219,4 +219,9 @@ __marimo__/
 
 # Airflow logs (auto-generated)
 docker/airflow/logs/
-dbt/logs/.gitignore
+
+# dbt dependencies and generated files
+dbt/dbt_packages/
+dbt/dbt_modules/
+dbt/target/
+dbt/logs/
