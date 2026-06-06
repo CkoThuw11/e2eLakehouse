@@ -1,3 +1,5 @@
+{{ config(materialized='table') }}
+
 SELECT
     {{ dbt_utils.generate_surrogate_key(['p.product_id']) }} AS product_key,
     p.product_id,
