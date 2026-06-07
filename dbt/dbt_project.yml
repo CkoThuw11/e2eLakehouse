@@ -9,5 +9,7 @@ models:
       +materialized: table
       +schema: silver
       +file_format: iceberg
-    marts:
-      +schema: analytics
+    gold:
+      +materialized: table
+      +schema: gold
+      +file_format: iceberg
