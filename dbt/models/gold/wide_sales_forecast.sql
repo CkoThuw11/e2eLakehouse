@@ -1,8 +1,7 @@
 {{ config(
     materialized='table',
     file_format='iceberg',
-    schema='gold',
-    partition_by=['year']
+    schema='gold'
 ) }}
 
 WITH all_dates AS (
@@ -62,6 +61,7 @@ filled AS (
 final AS (
     SELECT
         sale_date, 
+        year,
         product_category,
         total_revenue,
         total_orders,
