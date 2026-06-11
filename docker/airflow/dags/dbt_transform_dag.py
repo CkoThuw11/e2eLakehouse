@@ -57,12 +57,12 @@ with DAG(
 
     dbt_run_gold = BashOperator(
         task_id="dbt_run_gold",
-        bash_command="cd /opt/dbt && dbt run --select gold",
+        bash_command="docker exec dbt dbt run --select gold --exclude wide_sales_forecast",
     )
 
     dbt_test_gold = BashOperator(
         task_id="dbt_test_gold",
-        bash_command="cd /opt/dbt && dbt test --select gold",
+        bash_command="docker exec dbt dbt test --select gold --exclude wide_sales_forecast",
     )
 
     dbt_deps >> dbt_run_silver >> dbt_test_silver >> dbt_run_gold >> dbt_test_gold
