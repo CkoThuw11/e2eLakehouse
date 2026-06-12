@@ -186,10 +186,10 @@ dbt/models/
 
 ```bash
 # Check connection to Spark Thrift Server
-docker exec -it dbt-spark dbt debug
+docker exec -it dbt dbt debug
 
 # Compile SQL without running (inspect generated SQL)
-docker exec -it dbt-spark dbt compile
+docker exec -it dbt dbt compile
 ```
 
 ---

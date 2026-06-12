@@ -78,7 +78,9 @@ final AS (
             PARTITION BY product_category
             ORDER BY sale_date
             ROWS BETWEEN 29 PRECEDING AND CURRENT ROW
-        ) AS revenue_30d_rolling
+        ) AS revenue_30d_rolling,
+
+        year
 
     FROM filled
 )
