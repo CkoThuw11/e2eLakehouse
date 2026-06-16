@@ -5,11 +5,11 @@ import os
 
 def main():
 
-    pg_host = os.getenv("OLTP_DB_HOST", "northwind-db")
-    pg_port = os.getenv("OLTP_DB_PORT", "5432")
-    pg_db   = os.getenv("OLTP_DB_NAME", "northwind")
-    pg_user = os.getenv("OLTP_DB_USER", "admin")
-    pg_pwd  = os.getenv("OLTP_DB_PASSWORD", "admin")
+    pg_host = os.getenv("NORTHWIND_DB_HOST", "northwind-db")
+    pg_port = os.getenv("NORTHWIND_DB_PORT", "5432")
+    pg_db   = os.getenv("NORTHWIND_DB_NAME", "northwind")
+    pg_user = os.getenv("NORTHWIND_DB_USER", "admin")
+    pg_pwd  = os.getenv("NORTHWIND_DB_PASSWORD", "admin")
 
     jdbc_url = f"jdbc:postgresql://{pg_host}:{pg_port}/{pg_db}"
 
@@ -39,7 +39,7 @@ def main():
 
     for t in tables:
 
-        print(f"➡️ Processing {t}")
+        print(f"Processing {t}")
 
         df = spark.read.jdbc(jdbc_url, t, properties=props)
 

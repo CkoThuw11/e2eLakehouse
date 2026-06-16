@@ -225,3 +225,33 @@ dbt/dbt_packages/
 dbt/dbt_modules/
 dbt/target/
 dbt/logs/
+
+# AI coding assistants — never track agent rules, memory, or session artifacts
+# Claude Code
+CLAUDE.md
+CLAUDE.local.md
+.claude/
+# OpenAI Codex / generic "agents" memory files
+AGENTS.md
+AGENT.md
+.codex/
+# Cursor
+.cursorrules
+.cursorignore
+.cursor/
+# Windsurf
+.windsurfrules
+.windsurf/
+# Aider
+.aider*
+# Continue.dev
+.continue/
+# GitHub Copilot
+.github/copilot-instructions.md
+.copilot/
+# Google Gemini CLI
+GEMINI.md
+.gemini/
+# Catch-all for any other agent rule files
+*.agent.md
+*.agents.md

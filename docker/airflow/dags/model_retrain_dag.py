@@ -9,7 +9,6 @@ import boto3
 from airflow import DAG
 from airflow.hooks.base import BaseHook
 from airflow.operators.python import PythonOperator
-from airflow.sensors.external_task import ExternalTaskSensor
 
 
 def log_failure(context):
@@ -27,27 +26,19 @@ def log_failure(context):
 
 
 def get_minio_config() -> dict:
-    conn = BaseHook.get_connection("minio_default")
-    extra = conn.extra_dejson or {}
-
-    endpoint_url = extra.get("endpoint_url") or f"http://{conn.host}:{conn.port}"
-    bucket = extra.get("bucket", "warehouse")
-
     return {
-        "endpoint_url": endpoint_url,
-        "access_key": conn.login,
-        "secret_key": conn.password,
-        "bucket": bucket,
+        "endpoint_url": os.getenv("MINIO_ENDPOINT", "http://minio:9000"),
+        "access_key": os.getenv("MINIO_ACCESS_KEY", "admin"),
+        "secret_key": os.getenv("MINIO_SECRET_KEY", "admin123"),
+        "bucket": os.getenv("MINIO_BUCKET", "warehouse"),
     }
 
 
 def get_trino_config() -> dict:
-    conn = BaseHook.get_connection("trino_default")
-
     return {
-        "host": conn.host,
-        "port": str(conn.port or 8080),
-        "user": conn.login or "airflow",
+        "host": os.getenv("TRINO_HOST", "trino"),
+        "port": os.getenv("TRINO_PORT", "8080"),
+        "user": os.getenv("TRINO_USER", "airflow"),
     }
 
 
@@ -86,6 +77,38 @@ def run_prophet_training() -> None:
         raise RuntimeError(f"Prophet training failed with exit code {result.returncode}")
 
 
+def _latest_metrics_key(s3, bucket: str) -> str:
+    """Resolve the metrics JSON key for the most recent training run by
+    reading the models/latest_overall.txt pointer that train_prophet.py writes."""
+    pointer = s3.get_object(Bucket=bucket, Key="models/latest_overall.txt")
+    model_key = pointer["Body"].read().decode().strip()
+    return model_key.replace("prophet_overall_", "metrics_overall_").replace(".pkl", ".json")
+
+
+def check_threshold() -> None:
+    minio = get_minio_config()
+    s3 = boto3.client(
+        "s3",
+        endpoint_url=minio["endpoint_url"],
+        aws_access_key_id=minio["access_key"],
+        aws_secret_access_key=minio["secret_key"],
+    )
+    key = _latest_metrics_key(s3, minio["bucket"])
+    obj = s3.get_object(Bucket=minio["bucket"], Key=key)
+    metrics = json.loads(obj["Body"].read().decode("utf-8"))
+
+    mae = metrics.get("mae", 0)
+    mean_rev = metrics.get("mean_test_revenue", 1)
+    meets = metrics.get("meets_threshold", False)
+
+    print(f"[METRICS] MAE={mae:.2f} | Mean Test Revenue={mean_rev:.2f} | Error Rate={mae/mean_rev*100:.1f}%")
+
+    if meets:
+        print("[OK] Model meets business threshold (MAE <= 30% of mean revenue)")
+    else:
+        print(f"[ALERT] Model does NOT meet threshold — MAE={mae:.2f} exceeds 30% of mean revenue={mean_rev*0.30:.2f}. Manual review needed.")
+
+
 def log_metrics() -> None:
     minio = get_minio_config()
 
@@ -98,7 +121,7 @@ def log_metrics() -> None:
 
     obj = s3.get_object(
         Bucket=minio["bucket"],
-        Key="models/prophet_v1_metrics.json",
+        Key=_latest_metrics_key(s3, minio["bucket"]),
     )
 
     metrics = json.loads(obj["Body"].read().decode("utf-8"))
@@ -120,20 +143,11 @@ with DAG(
     description="Weekly Prophet retraining from Gold wide_sales_forecast.",
     default_args=default_args,
     start_date=datetime(2026, 5, 27),
-    schedule_interval="0 2 * * 1",
+    schedule_interval=None,  # Triggered by lakehouse_pipeline_dag (or manually)
     catchup=False,
+    is_paused_upon_creation=False,
     tags=["ml", "prophet", "training", "gold"],
 ) as dag:
-
-    wait_for_dbt_transform = ExternalTaskSensor(
-        task_id="wait_for_dbt_transform",
-        external_dag_id="dbt_transform_dag",
-        external_task_id=None,
-        execution_delta=timedelta(hours=1),
-        timeout=3600,
-        poke_interval=60,
-        mode="reschedule",
-    )
 
     run_prophet_training_task = PythonOperator(
         task_id="run_prophet_training",
@@ -142,9 +156,14 @@ with DAG(
         retry_delay=timedelta(minutes=5),
     )
 
+    check_threshold_task = PythonOperator(
+        task_id="check_threshold",
+        python_callable=check_threshold,
+    )
+
     log_metrics_task = PythonOperator(
         task_id="log_metrics",
         python_callable=log_metrics,
     )
 
-    wait_for_dbt_transform >> run_prophet_training_task >> log_metrics_task
+    run_prophet_training_task >> check_threshold_task >> log_metrics_task

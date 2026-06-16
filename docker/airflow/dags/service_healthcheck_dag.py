@@ -72,20 +72,14 @@ def check_trino() -> None:
 
 def check_spark() -> None:
     """
-    Spark UI can be exposed on different ports depending on your setup.
-    In this project overview, Spark exposes 4040 and 8080.
-    We first try Spark Master/UI on 8080, then fallback to 4040.
+    Check the Spark Thrift Server, which is the always-running Spark service.
+    Its Spark UI is exposed on port 4040 inside the Docker network.
+    spark-ingest only has a UI while a job is actively running, so we skip it.
     """
-    try:
-        check_http_endpoint(
-            url="http://spark:8080",
-            service_name="Spark UI / Master"
-        )
-    except Exception:
-        check_http_endpoint(
-            url="http://spark:4040",
-            service_name="Spark Application UI"
-        )
+    check_http_endpoint(
+        url="http://spark-thrift-server:4040",
+        service_name="Spark Thrift Server UI",
+    )
 
 
 default_args = {

@@ -1,0 +1,27 @@
+# =====================================================================
+# Them service nay vao phan `services:` cua docker-compose.yaml goc.
+# Dashboard se chay tai http://localhost:8501
+# =====================================================================
+
+  streamlit-dashboard:
+    build:
+      context: ./docker/streamlit
+      dockerfile: Dockerfile
+    image: e2elakehouse-streamlit:latest
+    container_name: streamlit-dashboard
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env
+    environment:
+      # Trong Docker network noi bo, Trino nghe tren port 8080
+      TRINO_HOST: trino
+      TRINO_PORT: "8080"
+      TRINO_USER: streamlit_dashboard
+      MINIO_ENDPOINT: http://minio:9000
+    depends_on:
+      - trino
+      - minio
+    networks:
+      - data-network
+    restart: unless-stopped
