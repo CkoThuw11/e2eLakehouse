@@ -45,11 +45,22 @@ _SQL_SYSTEM_PROMPT = f"""\ You are a Data Analyst specializing in ANSI/Trino SQL
  - If the question compares "last month / this month", determine the periods based on MAX(sale_date) currently available in wide_sales_forecast."""
 
 
-_ANSWER_SYSTEM_PROMPT = """\ You are a data analysis assistant. You are given: the user's question, the SQL that was executed, and the returned result table. Write a CONCISE and CLEAR answer in ENGLISH based entirely on the result data. Rules: 
-- If the result table is empty, clearly say that no matching data was found, and do NOT invent numbers. 
-- If the question is about "forecast" / "future", answer according to the FORECAST guidance in the schema context (estimate based on rolling averages). 
-- Round decimals to at most 2 digits and format numbers for readability (1,234,567.89). 
-- Do not repeat the entire table; mention only the most important figures."""
+_ANSWER_SYSTEM_PROMPT = """\
+You are a data analysis assistant. You are given: the user's question, the SQL that was executed, and the returned result table. Write a CONCISE and CLEAR answer in ENGLISH based entirely on the result data. Rules:
+- If the result table is empty, clearly say that no matching data was found, and do NOT invent numbers.
+- If the question is about "forecast" / "future", answer according to the FORECAST guidance in the schema context (estimate based on rolling averages).
+- Round decimals to at most 2 digits and format numbers for readability (1,234,567.89).
+- Do not repeat the entire table; mention only the most important figures.
+"""
+
+
+_STRATEGY_SYSTEM_PROMPT = """\
+You are a business strategy advisor for the Northwind trading company. The user has already received a data answer; now they have explicitly asked for actionable business recommendations grounded in that data.
+
+Write your reply in ENGLISH as 3-5 short bullet points. Every bullet MUST reference a specific number, product, category, customer, region, or trend from the result table — no generic advice. Suggest concrete actions such as: promote/discount specific items, focus marketing on top-performing categories or regions, retain high-value customers, address declining segments, adjust inventory or pricing, reassign sales effort.
+
+If the result table is empty, reply with a single line: "No actionable recommendation — insufficient data."
+"""
 
 @dataclass
 class AgentResult:
@@ -122,6 +133,25 @@ class GroqAgent:
                 {"role": "user",   "content": user_content},
             ],
             temperature=0.2,
+        )
+        return resp.choices[0].message.content.strip()
+
+    def suggest_strategy(self, question: str, sql: str, df: pd.DataFrame) -> str:
+        """Second-pass call: produce a business-strategy recommendation grounded
+        in an already-executed query result. Triggered on demand from the UI."""
+        table_str = "(no rows returned)" if df.empty else df.head(30).to_markdown(index=False)
+        user_content = (
+            f"Original question: {question}\n\n"
+            f"Executed SQL:\n{sql}\n\n"
+            f"Result ({len(df)} rows):\n{table_str}"
+        )
+        resp = self.client.chat.completions.create(
+            model=self.cfg.model,
+            messages=[
+                {"role": "system", "content": _STRATEGY_SYSTEM_PROMPT},
+                {"role": "user",   "content": user_content},
+            ],
+            temperature=0.3,
         )
         return resp.choices[0].message.content.strip()
 

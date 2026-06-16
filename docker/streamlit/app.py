@@ -1,19 +1,32 @@
 """
 Northwind Lakehouse — Analytics Dashboard
 Streamlit app | iceberg.gold via Trino
-Tabs: Revenue · Products & Customers · Forecast · AI Assistant
+Pages: Overview (Revenue + Products & Customers) · Forecast · Model Training
+Floating AI Assistant in the bottom-right corner.
+
+Module layout:
+- app.py     → page config, global CSS, header, tab orchestration
+- data.py    → Trino + MinIO data-loading helpers
+- chat.py    → floating AI assistant component
 """
 from __future__ import annotations
 
-import os
-from datetime import date, timedelta
+from datetime import timedelta
 from typing import Optional
 
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
-from trino.dbapi import connect
+
+from chat import render_floating_assistant
+from data import (
+    date_bounds,
+    load_prophet_model,
+    load_training_history,
+    qry,
+    refresh_everything,
+)
 
 # ── Page config (must be first Streamlit call) ─────────────────────────────────
 st.set_page_config(
@@ -49,17 +62,8 @@ html, body, [class*="css"] {
 section[data-testid="stSidebar"]  { display: none !important; }
 [data-testid="collapsedControl"]   { display: none !important; }
 
-/* ── Top filter bar ── */
-.filter-bar {
-    background: #f8fafc;
-    border: 1px solid #e5e7eb;
-    border-radius: 12px;
-    padding: 0.9rem 1.25rem;
-    margin-bottom: 1.25rem;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-}
+/* Leave room at the bottom so the floating chat never overlaps content */
+.main .block-container { padding-bottom: 110px; }
 
 /* ── KPI cards ── */
 .kpi-card {
@@ -136,84 +140,157 @@ div[data-testid="column"] .stButton > button:hover {
     border-color: #93c5fd;
     color: #1d4ed8;
 }
+
+/* ── Header alignment: keep date filter and Refresh on the same baseline ── */
+.st-key-header_filter,
+.st-key-header_refresh {
+    display: flex;
+    align-items: center;
+    min-height: 56px;
+}
+.st-key-header_filter [data-testid="stDateInput"] { width: 100%; }
+.st-key-header_filter [data-testid="stDateInput"] > div { margin: 0 !important; }
+.st-key-header_refresh .stButton { width: 100%; }
+
+/* ── Floating AI chat — circular FAB + square chat panel ── */
+/* Closed state: round button pinned to bottom-right of viewport. */
+.st-key-ai_fab {
+    position: fixed !important;
+    bottom: 22px;
+    right: 22px;
+    z-index: 9999;
+    width: 64px !important;
+}
+.st-key-ai_fab .stButton > button {
+    width: 60px !important;
+    height: 60px !important;
+    border-radius: 50% !important;
+    background: linear-gradient(135deg, #2563EB 0%, #8B5CF6 100%) !important;
+    color: #ffffff !important;
+    border: none !important;
+    box-shadow: 0 10px 28px rgba(37, 99, 235, 0.45) !important;
+    font-size: 1.45rem !important;
+    padding: 0 !important;
+    line-height: 1 !important;
+}
+.st-key-ai_fab .stButton > button:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 14px 32px rgba(37, 99, 235, 0.55) !important;
+}
+
+/* Open state: fixed-size square chat panel pinned to bottom-right. */
+.st-key-ai_chat_panel {
+    position: fixed !important;
+    bottom: 22px;
+    right: 22px;
+    z-index: 9999;
+    width: 520px !important;
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 16px;
+    box-shadow: 0 18px 44px rgba(0,0,0,0.18);
+    padding: 18px 18px 14px 18px !important;
+}
+.st-key-ai_chat_panel h4 {
+    margin: 0;
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: #111827;
+}
+
+/* Header bar: title column flexes, action columns are pinned to identical
+   narrow width so the trash and minimize icons match. */
+.st-key-ai_header [data-testid="stHorizontalBlock"] {
+    align-items: center;
+    gap: 6px !important;
+}
+.st-key-ai_header [data-testid="column"]:nth-child(2),
+.st-key-ai_header [data-testid="column"]:nth-child(3) {
+    flex: 0 0 44px !important;
+    width: 44px !important;
+    min-width: 44px !important;
+    max-width: 44px !important;
+}
+.st-key-ai_header .stButton { width: 40px !important; }
+.st-key-ai_header .stButton > button {
+    width: 40px !important;
+    min-width: 40px !important;
+    max-width: 40px !important;
+    height: 40px !important;
+    min-height: 40px !important;
+    padding: 0 !important;
+    border-radius: 10px !important;
+    border: 1px solid #e5e7eb !important;
+    background: #f9fafb !important;
+    color: #374151 !important;
+    font-size: 1.15rem !important;
+    line-height: 1 !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+}
+.st-key-ai_header .stButton > button:hover {
+    background: #eff6ff !important;
+    border-color: #93c5fd !important;
+    color: #1d4ed8 !important;
+}
+
+/* Scrollable messages region between header and input. */
+.st-key-ai_chat_messages {
+    max-height: 420px;
+    overflow-y: auto;
+    padding: 6px 4px 8px 4px;
+    border-top: 1px solid #f3f4f6;
+    border-bottom: 1px solid #f3f4f6;
+    margin: 10px 0 12px 0;
+}
+.st-key-ai_chat_messages [data-testid="stChatMessage"] {
+    padding: 0.6rem 0.75rem;
+    margin-bottom: 0.5rem;
+    font-size: 0.92rem;
+}
+
+/* Loading indicator that sits ABOVE the input row while the agent thinks. */
+.st-key-ai_chat_loading {
+    padding: 6px 4px;
+    margin-bottom: 6px;
+}
+.st-key-ai_chat_loading [data-testid="stSpinner"] {
+    margin: 0 !important;
+}
+
+/* Sample-question chips inside the panel. */
+.st-key-ai_chat_panel .stButton > button {
+    font-size: 0.85rem;
+    padding: 0.55rem 0.85rem;
+}
+
+/* Input row stays at the bottom of the panel (renders last) */
+.st-key-ai_chat_input .stTextInput input {
+    border-radius: 10px;
+    padding: 0.55rem 0.75rem;
+    font-size: 0.95rem;
+}
+.st-key-ai_chat_input .stFormSubmitButton > button {
+    height: 42px !important;
+    min-height: 42px !important;
+    border-radius: 10px !important;
+    font-size: 1.1rem !important;
+    background: linear-gradient(135deg, #2563EB 0%, #8B5CF6 100%) !important;
+    color: white !important;
+    border: none !important;
+}
+/* Hide Streamlit's default "Press Enter to submit form" hint so the
+   placeholder is the only guidance inside the input. */
+.st-key-ai_chat_input [data-testid="InputInstructions"],
+.st-key-ai_chat_input [data-testid="stWidgetInstructions"] {
+    display: none !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
-# ── Agent bootstrap ────────────────────────────────────────────────────────────
-_AGENT_AVAILABLE = False
-_AGENT_IMPORT_ERR: str | None = None
-try:
-    from agent import AgentResult, GroqAgent       # type: ignore[import]
-    from agent.config import get_groq_config       # type: ignore[import]
-    _AGENT_AVAILABLE = True
-except ImportError as _e:
-    _AGENT_IMPORT_ERR = str(_e)
 
-
-@st.cache_resource
-def _load_agent() -> tuple:
-    if not _AGENT_AVAILABLE:
-        return None, f"Agent module not found: {_AGENT_IMPORT_ERR}"
-    try:
-        cfg = get_groq_config()
-        return GroqAgent(groq_cfg=cfg), None
-    except RuntimeError as exc:
-        return None, str(exc)
-
-
-# ── Trino helpers ──────────────────────────────────────────────────────────────
-_T_HOST = os.getenv("TRINO_HOST", "localhost")
-_T_PORT = int(os.getenv("TRINO_PORT", "8090"))
-_T_USER = os.getenv("TRINO_USER", "streamlit_dashboard")
-
-
-@st.cache_data(ttl=3600, show_spinner=False)
-def run_query(sql: str) -> pd.DataFrame:
-    conn = connect(
-        host=_T_HOST, port=_T_PORT, user=_T_USER,
-        catalog="iceberg", schema="gold",
-        http_scheme="http", request_timeout=60,
-    )
-    try:
-        cur = conn.cursor()
-        cur.execute(sql)
-        rows = cur.fetchall()
-        cols = [d[0] for d in (cur.description or [])]
-        return pd.DataFrame(rows, columns=cols)
-    finally:
-        try:
-            conn.close()
-        except Exception:
-            pass
-
-
-def qry(sql: str, msg: str = "Loading…") -> Optional[pd.DataFrame]:
-    try:
-        with st.spinner(msg):
-            return run_query(sql)
-    except Exception as exc:
-        st.error(f"Query error: {exc}")
-        return None
-
-
-@st.cache_data(ttl=3600, show_spinner=False)
-def date_bounds() -> tuple[date, date]:
-    try:
-        df = run_query(
-            "SELECT MIN(sale_date) mn, MAX(sale_date) mx "
-            "FROM iceberg.gold.wide_sales_forecast WHERE total_revenue > 0"
-        )
-        if df.empty:
-            raise ValueError
-        mn, mx = df["mn"].iloc[0], df["mx"].iloc[0]
-        mn = mn.date() if hasattr(mn, "date") else mn
-        mx = mx.date() if hasattr(mx, "date") else mx
-        return date(mn.year, mn.month, mn.day), date(mx.year, mx.month, mx.day)
-    except Exception:
-        return date(1996, 7, 4), date(1998, 5, 6)
-
-
-# ── UI helpers ─────────────────────────────────────────────────────────────────
+# ── UI helpers (kept local — used only by the tab renderers below) ────────────
 def kpi(label: str, value: str) -> None:
     st.markdown(
         f'<div class="kpi-card">'
@@ -241,28 +318,11 @@ def fig_style(fig: go.Figure, height: int = 320, legend: bool = False) -> go.Fig
     return fig
 
 
-def render_agent_reply(result) -> None:
-    """Render an AgentResult inside an active st.chat_message block."""
-    # Answer — shown in full
-    if result.ok and result.answer:
-        st.markdown(result.answer)
-    if result.error:
-        st.error(result.error)
-    # SQL — collapsed button, user opens if they want to inspect
-    if result.sql:
-        with st.expander("🔍 View SQL", expanded=False):
-            st.code(result.sql, language="sql")
-    # Data — shown directly, no extra click needed
-    df = result.result_df
-    if df is not None and isinstance(df, pd.DataFrame) and not df.empty:
-        st.dataframe(df.head(20), use_container_width=True, hide_index=True)
-
-
-# ── Page header + inline date filter ──────────────────────────────────────────
+# ── Page header: title · date filter · refresh ────────────────────────────────
 with st.spinner(""):
     min_d, max_d = date_bounds()
 
-title_col, gap_col, filter_col = st.columns([5, 1, 3])
+title_col, filter_col, refresh_col = st.columns([5, 3, 1])
 
 with title_col:
     st.markdown(
@@ -272,14 +332,21 @@ with title_col:
     )
 
 with filter_col:
-    dr = st.date_input(
-        "Date range",
-        value=(min_d, max_d),
-        min_value=min_d,
-        max_value=max_d,
-        format="YYYY-MM-DD",
-        label_visibility="collapsed",
-    )
+    with st.container(key="header_filter"):
+        dr = st.date_input(
+            "Date range",
+            value=(min_d, max_d),
+            min_value=min_d,
+            max_value=max_d,
+            format="YYYY-MM-DD",
+            label_visibility="collapsed",
+        )
+
+with refresh_col:
+    with st.container(key="header_refresh"):
+        if st.button("🔄 Refresh", use_container_width=True, help="Reload latest data from the lakehouse"):
+            refresh_everything()
+            st.rerun()
 
 if isinstance(dr, (list, tuple)) and len(dr) == 2:
     start_d, end_d = dr[0], dr[1]
@@ -291,22 +358,20 @@ else:
 sd = start_d.strftime("%Y-%m-%d")
 ed = end_d.strftime("%Y-%m-%d")
 
-st.caption(f"Showing **{sd}** → **{ed}** · Source: `iceberg.gold` via Trino · AI: LLaMA 3.3 70B (Groq)")
 st.divider()
 
 # ── Tabs ───────────────────────────────────────────────────────────────────────
-tab1, tab2, tab3, tab4 = st.tabs([
-    "📈  Revenue",
-    "🛍️  Products & Customers",
+tab_overview, tab_forecast, tab_model = st.tabs([
+    "📈  Overview",
     "🔮  Forecast",
-    "🤖  AI Assistant",
+    "🧪  Model Training",
 ])
 
 
 # ═══════════════════════════════════════════════════════════════════
-# TAB 1 — Revenue Overview
+# TAB 1 — Overview (Revenue + Products & Customers)
 # ═══════════════════════════════════════════════════════════════════
-with tab1:
+with tab_overview:
     df_kpi = qry(f"""
         SELECT
             COALESCE(SUM(fs.line_revenue), 0)                                           AS total_revenue,
@@ -374,14 +439,16 @@ with tab1:
             fig.update_traces(hovertemplate="<b>%{y}</b><br>$%{x:,.0f}<extra></extra>")
             st.plotly_chart(fig_style(fig), use_container_width=True)
 
+    st.divider()
+    st.markdown(
+        '<h2 style="font-size:1.15rem;font-weight:700;color:#111827;margin:0.4rem 0 1rem">'
+        '🛍️ Products & Customers</h2>',
+        unsafe_allow_html=True,
+    )
 
-# ═══════════════════════════════════════════════════════════════════
-# TAB 2 — Products & Customers
-# ═══════════════════════════════════════════════════════════════════
-with tab2:
-    col_l, col_r = st.columns(2, gap="large")
+    pc_l, pc_r = st.columns(2, gap="large")
 
-    with col_l:
+    with pc_l:
         sh("Top 10 Products by Revenue")
         df_p = qry(f"""
             SELECT dp.product_name, SUM(fs.line_revenue) AS revenue
@@ -404,7 +471,7 @@ with tab2:
             fig.update_traces(hovertemplate="<b>%{y}</b><br>$%{x:,.0f}<extra></extra>")
             st.plotly_chart(fig_style(fig, height=400), use_container_width=True)
 
-    with col_r:
+    with pc_r:
         sh("Revenue Share by Category")
         df_c2 = qry(f"""
             SELECT product_category, SUM(total_revenue) AS revenue
@@ -426,7 +493,6 @@ with tab2:
             fig.update_layout(showlegend=False)
             st.plotly_chart(fig_style(fig, height=400), use_container_width=True)
 
-    st.divider()
     sh("Top 10 Customers by Total Purchase")
     df_cu = qry(f"""
         SELECT
@@ -450,170 +516,205 @@ with tab2:
 
 
 # ═══════════════════════════════════════════════════════════════════
-# TAB 3 — Revenue Forecast
+# TAB 2 — Forecast
 # ═══════════════════════════════════════════════════════════════════
-with tab3:
-    st.info(
-        "Historical revenue with 7-day and 30-day rolling averages. "
-        "The dashed line is a 30-day linear trend projected forward with a ±15% confidence band.",
-        icon="ℹ️",
+with tab_forecast:
+    prophet_model, prophet_metrics = load_prophet_model()
+    model_error = prophet_metrics.get("error") if isinstance(prophet_metrics, dict) else None
+    has_prophet = prophet_model is not None and not model_error
+
+    view_choice = st.radio(
+        "Timeline view",
+        ["Full timeline", "Last 6 months"],
+        horizontal=True,
+        label_visibility="collapsed",
+        key="forecast_view",
     )
+
     df_h = qry(
         "SELECT sale_date, SUM(total_revenue) AS daily_revenue "
-        "FROM iceberg.gold.wide_sales_forecast GROUP BY sale_date ORDER BY sale_date",
+        "FROM iceberg.gold.wide_sales_forecast "
+        "WHERE total_revenue > 0 "
+        "GROUP BY sale_date ORDER BY sale_date",
         "Loading history…",
     )
+
     if df_h is not None and not df_h.empty:
         df_h["sale_date"] = pd.to_datetime(df_h["sale_date"])
         df_h = df_h.sort_values("sale_date").reset_index(drop=True)
         df_h["r7"]  = df_h["daily_revenue"].rolling(7,  min_periods=1).mean()
         df_h["r30"] = df_h["daily_revenue"].rolling(30, min_periods=1).mean()
 
-        mask = (
-            (df_h["sale_date"] >= pd.Timestamp(start_d)) &
-            (df_h["sale_date"] <= pd.Timestamp(end_d))
-        )
-        dv = df_h[mask].copy()
+        last_actual_date = df_h["sale_date"].max()
 
         fig = go.Figure()
         fig.add_trace(go.Scatter(
-            x=dv["sale_date"], y=dv["daily_revenue"],
-            name="Daily",
+            x=df_h["sale_date"], y=df_h["daily_revenue"],
+            name="Daily revenue",
             line=dict(color="#93c5fd", width=1),
             fill="tozeroy",
             fillcolor="rgba(147,197,253,0.07)",
-            hovertemplate="<b>%{x|%b %d}</b>  $%{y:,.0f}<extra>Daily</extra>",
+            hovertemplate="<b>%{x|%b %d, %Y}</b>  $%{y:,.0f}<extra>Daily</extra>",
         ))
         fig.add_trace(go.Scatter(
-            x=dv["sale_date"], y=dv["r7"],
+            x=df_h["sale_date"], y=df_h["r7"],
             name="7-day avg",
             line=dict(color=_ORANGE, width=2),
             hovertemplate="$%{y:,.0f}<extra>7d avg</extra>",
         ))
         fig.add_trace(go.Scatter(
-            x=dv["sale_date"], y=dv["r30"],
+            x=df_h["sale_date"], y=df_h["r30"],
             name="30-day avg",
             line=dict(color=_GREEN, width=2.5),
             hovertemplate="$%{y:,.0f}<extra>30d avg</extra>",
         ))
 
-        if len(dv) >= 7:
-            last_d   = dv["sale_date"].max()
-            last_avg = float(dv["r30"].iloc[-1])
-            window   = dv.tail(30)
-            slope    = (
-                float(window["r30"].iloc[-1]) - float(window["r30"].iloc[0])
-            ) / max(len(window) - 1, 1)
-            fd = pd.date_range(last_d + timedelta(days=1), periods=30)
-            fv = [last_avg + slope * i for i in range(1, 31)]
+        fc_future: Optional[pd.DataFrame] = None
+
+        if has_prophet:
+            future_df  = prophet_model.make_future_dataframe(periods=30, freq="D")
+            forecast   = prophet_model.predict(future_df)
+            fc_future  = forecast[forecast["ds"] > last_actual_date].copy()
 
             fig.add_trace(go.Scatter(
-                x=list(fd) + list(fd[::-1]),
-                y=[v * 1.15 for v in fv] + [v * 0.85 for v in fv[::-1]],
+                x=pd.concat([fc_future["ds"], fc_future["ds"].iloc[::-1]]),
+                y=pd.concat([fc_future["yhat_upper"], fc_future["yhat_lower"].iloc[::-1]]),
                 fill="toself",
-                fillcolor="rgba(139,92,246,0.08)",
+                fillcolor="rgba(139,92,246,0.12)",
                 line=dict(color="rgba(0,0,0,0)"),
-                name="±15% band",
+                name="80% confidence",
+                hoverinfo="skip",
             ))
             fig.add_trace(go.Scatter(
-                x=fd, y=fv,
-                name="Forecast",
-                line=dict(color=_PURPLE, width=2, dash="dot"),
-                hovertemplate="$%{y:,.0f}<extra>Forecast</extra>",
+                x=fc_future["ds"], y=fc_future["yhat"],
+                name="Prophet forecast",
+                line=dict(color=_PURPLE, width=2.5, dash="dot"),
+                hovertemplate="<b>%{x|%b %d, %Y}</b>  $%{y:,.0f}<extra>Prophet</extra>",
             ))
             fig.add_vline(
-                x=last_d.timestamp() * 1000,
+                x=last_actual_date.timestamp() * 1000,
                 line_dash="dash", line_color="#9ca3af",
-                annotation_text="Forecast →",
+                annotation_text="Prophet forecast →",
                 annotation_position="top right",
                 annotation_font_color="#9ca3af",
             )
+            fig.update_yaxes(tickprefix="$")
+            if view_choice == "Last 6 months":
+                fig.update_xaxes(range=[
+                    last_actual_date - timedelta(days=180),
+                    last_actual_date + timedelta(days=30),
+                ])
+            st.plotly_chart(fig_style(fig, height=500, legend=True), use_container_width=True)
 
-        fig.update_yaxes(tickprefix="$")
-        st.plotly_chart(fig_style(fig, height=500, legend=True), use_container_width=True)
-        st.caption("Confidence band ±15% · Forecast = linear extrapolation of 30-day rolling average")
+            if fc_future is not None and not fc_future.empty:
+                st.markdown("<br>", unsafe_allow_html=True)
+                sh("Forecasted Revenue · Next 30 Days")
+
+                total_fc = float(fc_future["yhat"].sum())
+                avg_fc   = float(fc_future["yhat"].mean())
+                peak_row = fc_future.loc[fc_future["yhat"].idxmax()]
+                peak_date = pd.to_datetime(peak_row["ds"]).strftime("%b %d, %Y")
+                peak_val  = float(peak_row["yhat"])
+
+                k1, k2, k3 = st.columns(3, gap="medium")
+                with k1:
+                    kpi("30-Day Forecast Total",   f"${total_fc:,.0f}")
+                with k2:
+                    kpi("Avg Daily Forecast",      f"${avg_fc:,.0f}")
+                with k3:
+                    kpi(f"Peak Day · {peak_date}", f"${peak_val:,.0f}")
+
+                st.markdown("<br>", unsafe_allow_html=True)
+                sh("Day-by-Day Forecast Table")
+                tbl = fc_future[["ds", "yhat", "yhat_lower", "yhat_upper"]].copy()
+                tbl["ds"]         = pd.to_datetime(tbl["ds"]).dt.strftime("%Y-%m-%d")
+                tbl["yhat"]       = tbl["yhat"].map("${:,.0f}".format)
+                tbl["yhat_lower"] = tbl["yhat_lower"].map("${:,.0f}".format)
+                tbl["yhat_upper"] = tbl["yhat_upper"].map("${:,.0f}".format)
+                tbl.columns = ["Date", "Forecast", "Lower (80% CI)", "Upper (80% CI)"]
+                st.dataframe(tbl, use_container_width=True, hide_index=True, height=350)
+
+        else:
+            if len(df_h) >= 7:
+                last_avg = float(df_h["r30"].iloc[-1])
+                window   = df_h.tail(30)
+                slope    = (float(window["r30"].iloc[-1]) - float(window["r30"].iloc[0])) / max(len(window) - 1, 1)
+                fd = pd.date_range(last_actual_date + timedelta(days=1), periods=30)
+                fv = [last_avg + slope * i for i in range(1, 31)]
+
+                fig.add_trace(go.Scatter(
+                    x=list(fd) + list(fd[::-1]),
+                    y=[v * 1.15 for v in fv] + [v * 0.85 for v in fv[::-1]],
+                    fill="toself",
+                    fillcolor="rgba(139,92,246,0.08)",
+                    line=dict(color="rgba(0,0,0,0)"),
+                    name="±15% band",
+                ))
+                fig.add_trace(go.Scatter(
+                    x=fd, y=fv,
+                    name="Forecast (linear)",
+                    line=dict(color=_PURPLE, width=2, dash="dot"),
+                    hovertemplate="$%{y:,.0f}<extra>Forecast</extra>",
+                ))
+                fig.add_vline(
+                    x=last_actual_date.timestamp() * 1000,
+                    line_dash="dash", line_color="#9ca3af",
+                    annotation_text="Forecast →",
+                    annotation_position="top right",
+                    annotation_font_color="#9ca3af",
+                )
+            fig.update_yaxes(tickprefix="$")
+            if view_choice == "Last 6 months":
+                fig.update_xaxes(range=[
+                    last_actual_date - timedelta(days=180),
+                    last_actual_date + timedelta(days=30),
+                ])
+            st.plotly_chart(fig_style(fig, height=500, legend=True), use_container_width=True)
+            st.caption("Linear projection · Confidence band ±15%")
 
 
 # ═══════════════════════════════════════════════════════════════════
-# TAB 4 — AI Assistant
+# TAB 3 — Model Training
 # ═══════════════════════════════════════════════════════════════════
-with tab4:
-    agent, agent_err = _load_agent()
-
-    if agent_err:
-        st.warning(f"**AI Assistant unavailable** — {agent_err}", icon="⚠️")
-        st.markdown(
-            "Add `GROQ_API_KEY=<your key from https://console.groq.com>` to `.env`, "
-            "then run: `docker compose up -d --build streamlit-dashboard`"
+with tab_model:
+    hist_df = load_training_history()
+    if hist_df.empty:
+        st.info(
+            "No training history yet. Run the `model_retrain_dag` in Airflow, "
+            "then click **🔄 Refresh** above to update the dashboard."
         )
     else:
-        # ── Sample questions ──────────────────────────────────────────────────
-        sh("Suggested questions")
-        st.caption("Powered by LLaMA 3.3 70B (Groq) · Answers in Vietnamese")
+        latest      = hist_df.iloc[-1]
+        n_runs      = len(hist_df)
+        latest_mae  = float(latest.get("mae", 0))
+        latest_rmse = float(latest.get("rmse", 0))
 
-        SAMPLES = [
-            "Top 5 best-selling products?",
-            "Monthly revenue for the most recent year?",
-            "Which customer has the highest average order value?",
-            "Which category had the strongest growth last month?",
-            "Which employee closed the most orders?",
-            "Is revenue trending up or down over the last 30 days?",
-        ]
-        _question_to_ask: Optional[str] = None
-        scols = st.columns(3, gap="small")
-        for i, q in enumerate(SAMPLES):
-            if scols[i % 3].button(q, key=f"sq_{i}"):
-                _question_to_ask = q
+        k1, k2, k3 = st.columns(3, gap="medium")
+        with k1:
+            kpi("Training Runs", f"{n_runs}")
+        with k2:
+            kpi("Latest MAE",    f"${latest_mae:,.0f}")
+        with k3:
+            kpi("Latest RMSE",   f"${latest_rmse:,.0f}")
 
-        st.divider()
+        st.markdown("<br>", unsafe_allow_html=True)
+        sh("Training Run History")
+        cols_keep = [c for c in ["trained_at", "train_end_date", "mae", "rmse",
+                                 "mean_test_revenue", "meets_threshold", "model_key"]
+                     if c in hist_df.columns]
+        view = hist_df[cols_keep].copy().sort_values("trained_at", ascending=False)
+        if "trained_at" in view.columns:
+            view["trained_at"] = pd.to_datetime(view["trained_at"]).dt.strftime("%Y-%m-%d %H:%M")
+        for moneycol in ("mae", "rmse", "mean_test_revenue"):
+            if moneycol in view.columns:
+                view[moneycol] = view[moneycol].map(lambda v: f"${v:,.0f}")
+        if "meets_threshold" in view.columns:
+            view["meets_threshold"] = view["meets_threshold"].map(lambda v: "✅" if v else "⚠️")
+        view.columns = [c.replace("_", " ").title() for c in view.columns]
+        st.dataframe(view, use_container_width=True, hide_index=True)
 
-        # ── Chat history ──────────────────────────────────────────────────────
-        if "chat" not in st.session_state:
-            st.session_state.chat = []
 
-        for msg in st.session_state.chat:
-            with st.chat_message(msg["role"], avatar="🧑" if msg["role"] == "user" else "🤖"):
-                if msg["role"] == "user":
-                    st.write(msg["content"])
-                else:
-                    # Answer — full text
-                    if msg.get("content"):
-                        st.markdown(msg["content"])
-                    if msg.get("error"):
-                        st.error(msg["error"])
-                    # SQL — collapsed button
-                    if msg.get("sql"):
-                        with st.expander("🔍 View SQL", expanded=False):
-                            st.code(msg["sql"], language="sql")
-                    # Data — shown directly, no expander
-                    df_msg = msg.get("df")
-                    if df_msg is not None and isinstance(df_msg, pd.DataFrame) and not df_msg.empty:
-                        st.dataframe(df_msg.head(20), use_container_width=True, hide_index=True)
-
-        # ── Handle new question (chat input OR sample button) ─────────────────
-        if prompt := st.chat_input("Ask anything about the Northwind data…"):
-            _question_to_ask = prompt
-
-        if _question_to_ask:
-            st.session_state.chat.append({"role": "user", "content": _question_to_ask})
-            with st.chat_message("user", avatar="🧑"):
-                st.write(_question_to_ask)
-            with st.chat_message("assistant", avatar="🤖"):
-                with st.spinner("Generating SQL and querying Trino…"):
-                    result = agent.ask(_question_to_ask)
-                render_agent_reply(result)
-                st.session_state.chat.append({
-                    "role":    "assistant",
-                    "content": result.answer or "",
-                    "sql":     result.sql,
-                    "df":      result.result_df,
-                    "error":   result.error,
-                })
-            st.rerun()
-
-        # ── Clear button ──────────────────────────────────────────────────────
-        if st.session_state.chat:
-            st.markdown("<br>", unsafe_allow_html=True)
-            if st.button("🗑️  Clear conversation", type="secondary"):
-                st.session_state.chat = []
-                st.rerun()
+# ═══════════════════════════════════════════════════════════════════
+# Floating AI Assistant
+# ═══════════════════════════════════════════════════════════════════
+render_floating_assistant()

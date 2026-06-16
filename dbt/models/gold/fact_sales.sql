@@ -1,3 +1,11 @@
+{{ config(
+    materialized='incremental',
+    file_format='iceberg',
+    schema='gold',
+    incremental_strategy='merge',
+    unique_key='order_detail_id'
+) }}
+
 SELECT
     o.order_id,
     {{ dbt_utils.generate_surrogate_key(['o.order_id', 'od.product_id']) }} AS order_detail_id,
@@ -12,3 +20,8 @@ SELECT
     o.freight
 FROM {{ ref('stg_orders') }} o
 JOIN {{ ref('stg_order_details') }} od ON o.order_id = od.order_id
+
+{% if is_incremental() %}
+  -- Only process orders that arrived after the latest one already in the fact.
+  WHERE o.order_id > (SELECT COALESCE(MAX(order_id), 0) FROM {{ this }})
+{% endif %}

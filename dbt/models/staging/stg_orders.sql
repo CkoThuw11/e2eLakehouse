@@ -1,3 +1,10 @@
+{{ config(
+    materialized='incremental',
+    file_format='iceberg',
+    incremental_strategy='merge',
+    unique_key='order_id'
+) }}
+
 SELECT
     CAST(order_id AS INT)                        AS order_id,
     CAST(customer_id AS STRING)                  AS customer_id,
@@ -15,3 +22,8 @@ SELECT
     TRIM(ship_country)                           AS ship_country,
     CURRENT_TIMESTAMP()                          AS _ingested_at
 FROM {{ source('bronze', 'orders') }}
+
+{% if is_incremental() %}
+  -- Only pull rows whose order_id is newer than what's already in silver.
+  WHERE CAST(order_id AS INT) > (SELECT COALESCE(MAX(order_id), 0) FROM {{ this }})
+{% endif %}

@@ -8,6 +8,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Dashboard app
 COPY docker/streamlit/app.py .
+COPY docker/streamlit/data.py .
+COPY docker/streamlit/chat.py .
 
 # Groq agent module — shared from docker/agent/
 COPY docker/agent/agent/ ./agent/

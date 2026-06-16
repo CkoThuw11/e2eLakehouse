@@ -68,8 +68,9 @@ with DAG(
     description="Create Iceberg schemas and ingest the Bronze layer from PostgreSQL.",
     default_args=default_args,
     start_date=datetime(2026, 5, 27),
-    schedule_interval="0 0 * * *",
+    schedule_interval=None,  # Triggered by lakehouse_pipeline_dag (or manually)
     catchup=False,
+    is_paused_upon_creation=False,
     tags=["spark", "bronze", "iceberg", "lakehouse"],
 ) as dag:
 
