@@ -41,28 +41,29 @@ with DAG(
 ) as dag:
 
     dbt_deps = BashOperator(
-        task_id="dbt_deps",
-        bash_command="cd /opt/dbt && dbt deps",
+        task_id="dbt_deps", 
+        bash_command="cd /opt/dbt && dbt deps --profiles-dir /opt/dbt",
+        execution_timeout=timedelta(minutes=5),
     )
 
     dbt_run_silver = BashOperator(
         task_id="dbt_run_silver",
-        bash_command="cd /opt/dbt && dbt run --select staging",
+        bash_command="cd /opt/dbt && dbt run --profiles-dir /opt/dbt --select staging",
     )
 
     dbt_test_silver = BashOperator(
         task_id="dbt_test_silver",
-        bash_command="cd /opt/dbt && dbt test --select staging",
+        bash_command="cd /opt/dbt && dbt test --profiles-dir /opt/dbt --select staging",
     )
 
     dbt_run_gold = BashOperator(
         task_id="dbt_run_gold",
-        bash_command="docker exec dbt dbt run --select gold --exclude wide_sales_forecast",
+        bash_command="cd /opt/dbt && dbt run --profiles-dir /opt/dbt -select gold",
     )
 
     dbt_test_gold = BashOperator(
         task_id="dbt_test_gold",
-        bash_command="docker exec dbt dbt test --select gold --exclude wide_sales_forecast",
+        bash_command="cd /opt/dbt && dbt test --profiles-dir /opt/dbt --select gold",
     )
 
     dbt_deps >> dbt_run_silver >> dbt_test_silver >> dbt_run_gold >> dbt_test_gold
