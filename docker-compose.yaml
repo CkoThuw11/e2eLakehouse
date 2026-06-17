@@ -1,71 +1,200 @@
 services:
+  airflow-db:
+    image: postgres:15
+    container_name: airflow-db
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    ports:
+      - "5434:5432"
+    networks:
+      - data-network
+
+  airflow-init:
+    build:
+      context: .
+      dockerfile: docker/airflow/Dockerfile
+      args:
+        DOCKER_GID: "${DOCKER_GID:-989}"
+    image: e2elakehouse-airflow:latest
+    container_name: airflow-init
+    user: "0:0"
+    depends_on:
+      - airflow-db
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-db:5432/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__WEBSERVER__SECRET_KEY: local-dev-secret-key
+      DBT_PROFILES_DIR: /opt/dbt
+      DBT_PROJECT_DIR: /opt/dbt
+      AWS_ACCESS_KEY_ID: ${MINIO_ACCESS_KEY}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_SECRET_KEY}
+      AWS_REGION: us-east-1
+    volumes:
+      - ./docker/airflow/dags:/opt/airflow/dags
+      - ./docker/airflow/logs:/opt/airflow/logs
+      - ./dbt:/opt/dbt
+      - ./docker/ml:/opt/ml
+      - ./docker/spark/spark-app:/opt/spark-app
+      - ./docker/spark/spark-config/core-site.xml:/opt/spark-conf/core-site.xml
+      - ./docker/spark/spark-config/hive-site.xml:/opt/spark-conf/hive-site.xml
+    command: >
+      bash -c "
+      airflow db migrate &&
+      airflow users create
+      --username airflow
+      --password airflow
+      --firstname Air
+      --lastname Flow
+      --role Admin
+      --email airflow@example.com || true
+      "
+    dns: ["8.8.8.8", "8.8.4.4"]
+    networks:
+      - data-network
+
+  airflow-webserver:
+    image: e2elakehouse-airflow:latest
+    user: "0:0"
+    container_name: airflow-webserver
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+      airflow-db:
+        condition: service_started
+    ports:
+      - "8081:8080"
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-db:5432/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__WEBSERVER__SECRET_KEY: local-dev-secret-key
+      DBT_PROFILES_DIR: /opt/dbt
+      DBT_PROJECT_DIR: /opt/dbt
+      AWS_ACCESS_KEY_ID: ${MINIO_ACCESS_KEY}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_SECRET_KEY}
+      AWS_REGION: us-east-1
+    volumes:
+      - ./docker/airflow/dags:/opt/airflow/dags
+      - ./docker/airflow/logs:/opt/airflow/logs
+      - ./dbt:/opt/dbt
+      - ./docker/ml:/opt/ml
+      - ./docker/spark/spark-app:/opt/spark-app
+      - ./docker/spark/spark-config/core-site.xml:/opt/spark-conf/core-site.xml
+      - ./docker/spark/spark-config/hive-site.xml:/opt/spark-conf/hive-site.xml
+    command: webserver
+    dns: ["8.8.8.8", "8.8.4.4"]
+    networks:
+      - data-network
+
+  airflow-scheduler:
+    image: e2elakehouse-airflow:latest
+    user: "0:0"
+    container_name: airflow-scheduler
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+      airflow-db:
+        condition: service_started
+    command: scheduler
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-db:5432/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__WEBSERVER__SECRET_KEY: local-dev-secret-key
+      DBT_PROFILES_DIR: /opt/dbt
+      DBT_PROJECT_DIR: /opt/dbt
+      AWS_ACCESS_KEY_ID: ${MINIO_ACCESS_KEY}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_SECRET_KEY}
+      AWS_REGION: us-east-1
+    volumes:
+      - ./docker/airflow/dags:/opt/airflow/dags
+      - ./docker/airflow/logs:/opt/airflow/logs
+      - ./dbt:/opt/dbt
+      - ./docker/ml:/opt/ml
+      - ./docker/spark/spark-app:/opt/spark-app
+      - ./docker/spark/spark-config/core-site.xml:/opt/spark-conf/core-site.xml
+      - ./docker/spark/spark-config/hive-site.xml:/opt/spark-conf/hive-site.xml
+      - spark-binaries:/opt/spark
+    dns: ["8.8.8.8", "8.8.4.4"]
+    networks:
+      - data-network
+
+  airflow-triggerer:
+    image: e2elakehouse-airflow:latest
+    user: "0:0"
+    container_name: airflow-triggerer
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+      airflow-db:
+        condition: service_started
+    command: triggerer
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-db:5432/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__WEBSERVER__SECRET_KEY: local-dev-secret-key
+    volumes:
+      - ./docker/airflow/dags:/opt/airflow/dags
+      - ./docker/airflow/logs:/opt/airflow/logs
+    dns: ["8.8.8.8", "8.8.4.4"]
+    networks:
+      - data-network
+
   northwind-db:
     image: postgres:15
     container_name: northwind-db
-
     environment:
       POSTGRES_USER: ${NORTHWIND_DB_USER}
       POSTGRES_PASSWORD: ${NORTHWIND_DB_PASSWORD}
       POSTGRES_DB: ${NORTHWIND_DB_NAME}
-
     ports:
       - "${NORTHWIND_DB_PORT}:5432"
-
     volumes:
       - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
-
     networks:
       - data-network
 
   metastore-db:
     image: postgres:15
     container_name: metastore-db
-
     environment:
       POSTGRES_DB: ${METASTORE_DB_NAME}
       POSTGRES_USER: ${METASTORE_DB_USER}
       POSTGRES_PASSWORD: ${METASTORE_DB_PASSWORD}
-
     ports:
       - "${METASTORE_DB_PORT}:5432"
-
     networks:
       - data-network
 
   minio:
     image: minio/minio
     container_name: minio
-
     command: server /data --console-address ":${MINIO_CONSOLE_PORT}"
-
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
-
     ports:
       - "${MINIO_API_PORT}:9000"
       - "${MINIO_CONSOLE_PORT}:9001"
-
     networks:
       - data-network
 
   create-minio-bucket:
     image: minio/mc
     container_name: create-minio-bucket
-
     depends_on:
       - minio
-
     entrypoint: >
       /bin/sh -c "
       sleep 10;
       /usr/bin/mc alias set myminio ${MINIO_ENDPOINT} ${MINIO_ACCESS_KEY} ${MINIO_SECRET_KEY};
-
       /usr/bin/mc mb myminio/warehouse --ignore-existing;
-
       echo 'MinIO warehouse bucket created successfully';
       "
-
     networks:
       - data-network
 
@@ -73,24 +202,17 @@ services:
     image: starburstdata/hive:3.1.2-e.18
     container_name: hive-metastore
     hostname: hive-metastore
-
     environment:
       HIVE_METASTORE_DRIVER: org.postgresql.Driver
-
       HIVE_METASTORE_JDBC_URL: jdbc:postgresql://metastore-db:5432/${METASTORE_DB_NAME}
-
       HIVE_METASTORE_USER: ${METASTORE_DB_USER}
       HIVE_METASTORE_PASSWORD: ${METASTORE_DB_PASSWORD}
-
       HIVE_METASTORE_WAREHOUSE_DIR: ${HIVE_WAREHOUSE_DIR}
-
       HIVE_METASTORE_USERS_IN_ADMIN_ROLE: admin
-
       S3_ENDPOINT: ${MINIO_ENDPOINT}
       S3_ACCESS_KEY: ${MINIO_ACCESS_KEY}
       S3_SECRET_KEY: ${MINIO_SECRET_KEY}
       S3_PATH_STYLE_ACCESS: "true"
-
       REGION: ""
       GOOGLE_CLOUD_KEY_FILE_PATH: ""
       AZURE_ADL_CLIENT_ID: ""
@@ -105,48 +227,164 @@ services:
       AZURE_ABFS_OAUTH_SECRET: ""
       AZURE_ABFS_OAUTH_ENDPOINT: ""
       AZURE_WASB_ACCESS_KEY: ""
-
-      HIVE_METASTORE_PORT_EXPOSE: ${HIVE_METASTORE_PORT}
-
     ports:
       - "${HIVE_METASTORE_PORT}:9083"
-
-    volumes:
-      - ./docker/hive/hive-site.xml:/opt/hive-metastore/conf/hive-site.xml
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'cat < /dev/null > /dev/tcp/localhost/9083'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
     depends_on:
       - metastore-db
       - minio
       - create-minio-bucket
-
     networks:
       - data-network
 
-  spark:
+  spark-ingest:
     build:
-      context: ./docker/spark
-
-    container_name: spark-lakehouse
-
+      context: .
+      dockerfile: docker/spark/Dockerfile
+    container_name: spark-ingest
     command: tail -f /dev/null
-
-    depends_on:
-      - northwind-db
-      - hive-metastore
-      - minio
-      - create-minio-bucket
-
-    ports:
-      - "${SPARK_UI_PORT}:4040"
-      - "${SPARK_MASTER_PORT}:8080"
-
     volumes:
       - ./docker/spark/spark-app:/opt/spark-app
-      - ./docker/spark/spark-config:/opt/bitnami/spark/conf
       - ./docker/spark/spark-config/core-site.xml:/opt/spark/conf/core-site.xml
       - ./docker/spark/spark-config/hive-site.xml:/opt/spark/conf/hive-site.xml
-
+      - spark-binaries:/opt/spark
+    environment:
+      AWS_ACCESS_KEY_ID: ${MINIO_ACCESS_KEY}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_SECRET_KEY}
+      AWS_REGION: us-east-1
+    depends_on:
+      northwind-db:
+        condition: service_started
+      hive-metastore:
+        condition: service_healthy
+      minio:
+        condition: service_started
+      create-minio-bucket:
+        condition: service_started
     networks:
       - data-network
+
+  spark-thrift-server:
+    build:
+      context: .
+      dockerfile: docker/spark/Dockerfile
+    container_name: spark-thrift-server
+    command: >
+      /opt/spark/bin/spark-submit
+      --class org.apache.spark.sql.hive.thriftserver.HiveThriftServer2
+      --master local[*]
+      /opt/spark/jars/spark-hive-thriftserver_2.12-3.5.0.jar
+    volumes:
+      - ./docker/spark/spark-config/core-site.xml:/opt/spark/conf/core-site.xml
+      - ./docker/spark/spark-config/hive-site.xml:/opt/spark/conf/hive-site.xml
+      - ./docker/spark/spark-config/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf
+    environment:
+      AWS_ACCESS_KEY_ID: ${MINIO_ACCESS_KEY}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_SECRET_KEY}
+      AWS_REGION: us-east-1
+    ports:
+      - "10000:10000"
+      - "4041:4040"
+    depends_on:
+      hive-metastore:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    networks:
+      - data-network
+
+  dbt:
+    build:
+      context: .
+      dockerfile: docker/dbt-spark/Dockerfile
+    container_name: dbt
+    volumes:
+      - ./dbt:/usr/app
+    working_dir: /usr/app
+    environment:
+      - DBT_PROFILES_DIR=/usr/app
+      - DBT_PROJECT_DIR=/usr/app
+    ports:
+      - "8082:8080"
+    entrypoint: ["/bin/bash", "-c", "tail -f /dev/null"]
+    depends_on:
+      spark-thrift-server:
+        condition: service_started
+    dns: ["8.8.8.8", "8.8.4.4"]
+    networks:
+      - data-network
+
+  trino:
+    image: trinodb/trino:435
+    container_name: trino
+    ports:
+      - "8090:8080"
+    depends_on:
+      - hive-metastore
+      - minio
+    volumes:
+      - ./docker/trino/config.properties:/etc/trino/config.properties
+      - ./docker/trino/jvm.config:/etc/trino/jvm.config
+      - ./docker/trino/node.properties:/etc/trino/node.properties
+      - ./docker/trino/log.properties:/etc/trino/log.properties
+      - ./docker/trino/catalog:/etc/trino/catalog
+    networks:
+      - data-network
+
+  streamlit-dashboard:
+    build:
+      context: .
+      dockerfile: docker/streamlit/Dockerfile
+    image: e2elakehouse-streamlit:latest
+    container_name: streamlit-dashboard
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env
+    environment:
+      TRINO_HOST: trino
+      TRINO_PORT: "8080"
+      TRINO_USER: streamlit_dashboard
+      MINIO_ENDPOINT: http://minio:9000
+    depends_on:
+      - trino
+      - minio
+    dns: ["8.8.8.8", "8.8.4.4"]
+    networks:
+      - data-network
+    restart: unless-stopped
+
+  groq-agent:
+    build:
+      context: ./docker/agent
+      dockerfile: Dockerfile
+    image: e2elakehouse-groq-agent:latest
+    container_name: groq-agent
+    env_file:
+      - .env
+    environment:
+      TRINO_HOST: trino
+      TRINO_PORT: "8080"
+      TRINO_USER: groq_agent
+      TRINO_CATALOG: iceberg
+      TRINO_SCHEMA: gold
+    depends_on:
+      - trino
+      - minio
+    dns: ["8.8.8.8", "8.8.4.4"]
+    networks:
+      - data-network
+    stdin_open: true
+    tty: true
 
 networks:
   data-network:
+    driver: bridge
+
+volumes:
+  spark-binaries:

@@ -7,9 +7,10 @@ ENV PATH=$SPARK_HOME/bin:$PATH
 
 RUN mkdir -p /opt/spark-app
 
-COPY download_jars.sh /opt/download_jars.sh
+COPY docker/spark/download_jars.sh /opt/download_jars.sh
 
-RUN chmod +x /opt/download_jars.sh && \
+RUN sed -i 's/\r$//' /opt/download_jars.sh && \
+    chmod +x /opt/download_jars.sh && \
     /opt/download_jars.sh
 
 WORKDIR /opt/spark-app

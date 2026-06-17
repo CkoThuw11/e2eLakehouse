@@ -1,0 +1,15 @@
+name: 'e2e_lakehouse'
+version: '1.0'
+config-version: 2
+profile: 'dbt_lakehouse'
+
+models:
+  e2e_lakehouse:
+    staging:
+      +materialized: table
+      +schema: silver
+      +file_format: iceberg
+    gold:
+      +materialized: table
+      +schema: gold
+      +file_format: iceberg

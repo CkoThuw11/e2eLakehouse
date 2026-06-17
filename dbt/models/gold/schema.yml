@@ -1,0 +1,71 @@
+version: 2
+
+models:
+  - name: dim_date
+    columns:
+      - name: date_key
+        tests:
+          - unique
+          - not_null
+
+  - name: dim_customers
+    columns:
+      - name: customer_key
+        tests:
+          - unique
+          - not_null
+
+  - name: dim_employees
+    columns:
+      - name: employee_key
+        tests:
+          - unique
+          - not_null
+
+  - name: dim_products
+    columns:
+      - name: product_key
+        tests:
+          - unique
+          - not_null
+
+  - name: fact_sales
+    columns:
+      - name: order_detail_id
+        tests:
+          - unique
+          - not_null
+      - name: customer_key
+        tests:
+          - relationships:
+              to: ref('dim_customers')
+              field: customer_key
+      - name: product_key
+        tests:
+          - relationships:
+              to: ref('dim_products')
+              field: product_key
+      - name: employee_key
+        tests:
+          - relationships:
+              to: ref('dim_employees')
+              field: employee_key
+
+  - name: wide_sales_forecast
+    columns:
+      - name: sale_date
+        tests:
+          - not_null
+      - name: product_category
+        tests:
+          - not_null
+      - name: total_revenue
+        tests:
+          - not_null
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns:
+            - sale_date
+            - product_category
+      - dbt_utils.expression_is_true:
+          expression: "(SELECT MAX(sale_date) FROM gold.wide_sales_forecast) >= date '1998-01-01'"
