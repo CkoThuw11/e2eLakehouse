@@ -1,47 +1,29 @@
-# Northwind Lakehouse
+# 🏞️ Northwind Lakehouse
 
 End-to-end data lakehouse built on Apache Iceberg + Spark + Trino, with dbt transformations, a Prophet forecasting model, Airflow orchestration (parent pipeline + child DAGs), a Streamlit analytics dashboard, and a Groq-powered text-to-SQL agent.
 
-## Contents
+## 📑 Contents
 
-- [Architecture](#architecture)
-- [Services](#services)
-- [Repository Layout](#repository-layout)
-- [Quick Start](#quick-start)
-- [Service URLs](#service-urls)
-- [Airflow](#airflow)
-- [Streamlit Dashboard](#streamlit-dashboard)
-- [Groq AI Agent (Text-to-SQL)](#groq-ai-agent-text-to-sql)
-- [Prophet Forecasting](#prophet-forecasting)
-- [Trino](#trino)
-- [dbt Models](#dbt-models)
-- [MinIO Warehouse Layout](#minio-warehouse-layout)
+- [🏗️ Architecture](#️-architecture)
+- [🐳 Services](#-services)
+- [📁 Repository Layout](#-repository-layout)
+- [🚀 Quick Start](#-quick-start)
+- [🔗 Service URLs](#-service-urls)
+- [🌬️ Airflow](#️-airflow)
+- [📊 Streamlit Dashboard](#-streamlit-dashboard)
+- [🤖 Groq AI Agent (Text-to-SQL)](#-groq-ai-agent-text-to-sql)
+- [🔮 Prophet Forecasting](#-prophet-forecasting)
+- [🔍 Trino](#-trino)
+- [🧱 dbt Models](#-dbt-models)
+- [🗄️ MinIO Warehouse Layout](#️-minio-warehouse-layout)
+- [🙏 Acknowledgments](#-acknowledgments)
 
 ---
 
-## Architecture
+## 🏗️ Architecture
 
-```
-                ┌─────────────────────────────────────────────┐
-                │  Airflow (scheduler + webserver + triggerer)│
-                │  lakehouse_pipeline_dag  →  bronze  →  dbt  →  model retrain
-                └─────────────────────────────────────────────┘
-                                     │ orchestrates
-                                     ▼
-PostgreSQL (Northwind)
-        │
-        ▼  spark-submit
-  Bronze (Iceberg)
-        │
-        ▼  dbt staging
-  Silver (Iceberg)
-        │
-        ▼  dbt gold
-  Gold (Iceberg) ─────► Trino ──► Streamlit Dashboard
-        │                     └──► Groq AI Agent (text-to-SQL)
-        ▼  Prophet training
-  MinIO models/  ◄──── read by Streamlit Forecast tab
-```
+![Architecture](imgs/Architecture.png)
+*End-to-end flow: PostgreSQL → Spark (Bronze) → dbt (Silver/Gold) → Trino → {Streamlit, Groq Agent}, orchestrated by Airflow, with MinIO + Hive Metastore as the storage layer.*
 
 | Layer  | Iceberg Schema   | Tool                   | Purpose                                   |
 | ------ | ---------------- | ---------------------- | ----------------------------------------- |
@@ -53,7 +35,7 @@ The Hive Metastore stores Iceberg table metadata; MinIO (`warehouse/` bucket) st
 
 ---
 
-## Services
+## 🐳 Services
 
 Everything runs from a single `docker-compose.yaml` on a shared `data-network`:
 
@@ -74,7 +56,7 @@ Everything runs from a single `docker-compose.yaml` on a shared `data-network`:
 
 ---
 
-## Repository Layout
+## 📁 Repository Layout
 
 ```
 e2eLakehouse/
@@ -99,7 +81,7 @@ e2eLakehouse/
 
 ---
 
-## Quick Start
+## 🚀 Quick Start
 
 ### 1. Configure environment
 
@@ -149,7 +131,7 @@ docker exec -it dbt dbt test --select gold
 
 ---
 
-## Service URLs
+## 🔗 Service URLs
 
 | Service             | URL                       | Credentials                |
 | ------------------- | ------------------------- | -------------------------- |
@@ -160,9 +142,12 @@ docker exec -it dbt dbt test --select gold
 
 ---
 
-## Airflow
+## 🌬️ Airflow
 
 Airflow runs three Python processes: `airflow-scheduler`, `airflow-webserver`, and `airflow-triggerer`. The triggerer is required so the parent pipeline can wait on its children using `deferrable=True` operators (no worker slot is held during the wait, and waits survive scheduler restarts).
+
+![Parent pipeline DAG](imgs/airflow_lakehousepipeline.png)
+*Graph view of `lakehouse_pipeline_dag` — bronze → dbt → model retrain, chained via deferrable `TriggerDagRunOperator`.*
 
 ### DAGs
 
@@ -176,6 +161,9 @@ Airflow runs three Python processes: `airflow-scheduler`, `airflow-webserver`, a
 | `service_healthcheck_dag` | `*/10 * * * *`           | Parallel reachability checks for PostgreSQL, MinIO, Trino, and Spark.                   |
 
 The three pipeline children (`bronze_ingest_dag`, `dbt_transform_dag`, `model_retrain_dag`) have `schedule_interval=None` and `is_paused_upon_creation=False` — they sit **unpaused but idle**, only running when the parent (or you, manually) triggers them. This avoids race conditions between scheduled child runs and parent-triggered runs.
+
+![Airflow DAGs list](imgs/airflow_dags.png)
+*All 6 DAGs in the Airflow UI with their schedules and last-run status.*
 
 ### Common commands
 
@@ -192,9 +180,12 @@ docker exec -it airflow-scheduler airflow dags list-runs -d lakehouse_pipeline_d
 
 ---
 
-## Streamlit Dashboard
+## 📊 Streamlit Dashboard
 
 Live analytics dashboard connected to `iceberg.gold` via Trino. Starts automatically with `docker compose up`. All Trino queries are cached with a 1-hour TTL; a date range filter at the top of the page drives every chart.
+
+![Streamlit Overview tab](imgs/streamlit_overviewdashboard.png)
+*Overview tab — KPIs, daily revenue, category breakdown, top products and customers.*
 
 The dashboard is split across three files for clarity:
 
@@ -210,11 +201,20 @@ The dashboard is split across three files for clarity:
 | Forecast          | Historical revenue + 7/30-day rolling averages, overlaid with the Prophet 30-day forecast (or a linear fallback if no model is trained yet). |
 | Model Training    | Training run history pulled from MinIO (`models/metrics_overall_*.json`), latest MAE / RMSE, threshold flag. |
 
+![Forecast tab](imgs/streamlit_forecast.png)
+*Forecast tab — historical revenue + 7/30-day rolling averages overlaid with the Prophet 30-day forecast.*
+
+![Model Training tab](imgs/streamlit_modeltraining.png)
+*Model Training tab — run history with MAE / RMSE and threshold check.*
+
 The floating AI assistant in the bottom-right corner wraps the Groq agent (see below) inside the dashboard.
+
+![Embedded AI assistant](imgs/streamlit_AIAgent.png)
+*The 💬 floating assistant — same Groq agent as the CLI, embedded in the dashboard.*
 
 ---
 
-## Groq AI Agent (Text-to-SQL)
+## 🤖 Groq AI Agent (Text-to-SQL)
 
 CLI agent and Streamlit component that converts natural language into SQL via the Groq API (LLaMA 3.3 70B), validates that the SQL is read-only, executes it on Trino, and returns a plain-language answer.
 
@@ -240,7 +240,7 @@ Inside the Streamlit dashboard, click the 💬 button in the bottom-right corner
 
 ---
 
-## Prophet Forecasting
+## 🔮 Prophet Forecasting
 
 The forecasting model is trained from `iceberg.gold.wide_sales_forecast` by `docker/ml/train_prophet.py`, orchestrated by `model_retrain_dag`. Each successful run uploads three artifacts to MinIO:
 
@@ -254,9 +254,12 @@ A local copy of artifacts also lives under `models/prophet/` (gitignored), and e
 
 ---
 
-## Trino
+## 🔍 Trino
 
 Single-node coordinator with an Iceberg catalog backed by Hive Metastore and MinIO.
+
+![Trino UI](imgs/trino_ui.png)
+*Trino Web UI at `http://localhost:8090` showing recent queries against `iceberg.gold`.*
 
 ```bash
 # CLI
@@ -278,7 +281,7 @@ See `README_Trino.md` for additional Trino setup notes.
 
 ---
 
-## dbt Models
+## 🧱 dbt Models
 
 ```
 models/staging/          models/gold/
@@ -302,9 +305,12 @@ models/staging/          models/gold/
 
 dbt runs inside the `dbt` container; `profiles.yml` is committed and targets the in-cluster Trino at `trino:8080`.
 
+![dbt lineage](imgs/dbt_lineage.png)
+*dbt lineage graph — staging models flowing into the gold star schema.*
+
 ---
 
-## MinIO Warehouse Layout
+## 🗄️ MinIO Warehouse Layout
 
 ```
 warehouse/
@@ -313,3 +319,14 @@ warehouse/
 ├── gold/     (dim_customers, dim_products, dim_employees, dim_date, fact_sales, wide_sales_forecast)
 └── models/   (prophet_overall_*.pkl, metrics_overall_*.json, latest_overall.txt)
 ```
+
+![MinIO warehouse bucket](imgs/minio_buckets.png)
+*MinIO console — the `warehouse/` bucket showing the bronze / silver / gold / models layout.*
+
+---
+
+## 🙏 Acknowledgments
+
+We would like to express our sincere gratitude to **Mr. Thon-Da Nguyen** for his guidance, mentorship, and continuous support throughout the development of this project. His insights into modern data lakehouse architecture, hands-on feedback during each layer of the pipeline (Bronze → Silver → Gold), and encouragement to explore tools like Apache Iceberg, Trino, dbt, Airflow, and LLM were invaluable in shaping the final outcome.
+
+This project would not have been possible without his patience and dedication to helping us learn end-to-end data engineering by building, not just by reading.
