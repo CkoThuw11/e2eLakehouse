@@ -218,9 +218,64 @@ The floating AI assistant in the bottom-right corner wraps the Groq agent (see b
 
 CLI agent and Streamlit component that converts natural language into SQL via the Groq API (LLaMA 3.3 70B), validates that the SQL is read-only, executes it on Trino, and returns a plain-language answer.
 
-**Flow:** `question → Groq (generate SQL) → sql_guard (SELECT-only) → Trino → Groq (format answer) → reply`
+### 🔄 Agent Workflow
 
-If SQL fails, the agent retries once with the error fed back to the model. The `sql_guard` module rejects anything that isn't a single `SELECT` — do not bypass it when extending the agent.
+```mermaid
+flowchart TD
+    User([User Question]) --> NLGenerate["1. Generate SQL via Groq (LLaMA 3.3 70B)"]
+    subgraph Context["Context Injection & Grounding"]
+        Schema["Schema Context: columns, tables, keys"] -.-> NLGenerate
+        TimeNote["Data Date Range Guidance (relative to MAX date)"] -.-> NLGenerate
+    end
+    
+    NLGenerate --> Clean["2. Clean SQL (Strip fences & comments)"]
+    Clean --> SQLGuard{"3. SQL Guard Validation"}
+    
+    SQLGuard -- "Invalid/Unsafe" --> GuardError["Raise SQLValidationError"]
+    SQLGuard -- "Valid & Read-Only" --> TrinoRun["4. Execute SQL via Trino"]
+    
+    TrinoRun -- "Trino Error" --> RetryCheck{"Retry Attempt < Max?"}
+    RetryCheck -- "Yes" --> NLGenerateRetry["1b. Regenerate SQL with Error Feedback"]
+    NLGenerateRetry --> Clean
+    RetryCheck -- "No" --> FailExit["Return AgentResult with Error"]
+    
+    TrinoRun -- "Success (Result DataFrame)" --> FormatAns["5. Format Answer via Groq"]
+    
+    subgraph AntiHallucination["Anti-Hallucination Guards"]
+        FormatRules["- Format solely on result table\n- If empty, report no data (do not invent numbers)\n- Round decimals, restrict summary size"] -.-> FormatAns
+    end
+    
+    FormatAns --> OutAns["6. Final Answer to User"]
+    
+    OutAns --> AskStrategy{"User Requests Strategy Recommendations?"}
+    AskStrategy -- "Yes" --> StratPrompt["7. Generate Strategy via Groq"]
+    subgraph StratRules["Strategy Constraints"]
+        SR["- Bullet points must reference a specific number/trend\n- No generic advice allowed"] -.-> StratPrompt
+    end
+    StratPrompt --> FinalStrat["Final Recommendations"]
+```
+
+### 🛡️ Anti-Hallucination & Validation Mechanisms
+
+To ensure factual correctness, query safety, and strictly ground LLM outputs in real business metrics, the system implements several robust defense mechanisms:
+
+1. **Strict Database Schema Grounding (Context Injection):**
+   * **Explicit Metadata:** The LLM's system prompt is injected with the exact database schema defined in [schema_context.py](docker/agent/agent/schema_context.py), including table names (prefixed with `iceberg.gold`), column names, and data types.
+   * **Time-Reference Grounding:** Since the dataset spans a static range (1996–1998), queries with relative timeframes like *"last month"* would return zero results if compared to today's date. The schema context explicitly instructs the model to evaluate relative timeframes against `MAX(sale_date)` from the database.
+   * **Strict Foreign Key Mapping:** The LLM is directed to use surrogate keys (`*_key` columns) strictly for `JOIN` operations, preventing sorting or value comparisons on hashes.
+
+2. **Deterministic SQL Guard (Input & Output Sanitization):**
+   * **Read-Only Enforcement:** The [sql_guard.py](docker/agent/agent/sql_guard.py) module strips all comments and verifies that the query begins with `SELECT` or `WITH`.
+   * **Injection Prevention:** It forbids the mid-query semicolon `;` to block statement chaining (e.g., preventing `SELECT ...; DROP TABLE ...`).
+   * **Keyword Blacklist:** It scans the query for a strict list of modification commands (`INSERT`, `UPDATE`, `DELETE`, `DROP`, `ALTER`, etc.) using regex word boundary matching.
+
+3. **Execution Feedback & Auto-Correction Loop:**
+   * If a syntax or execution error occurs on Trino, the agent intercepts the exception and feeds the SQL alongside the exact error message back to the LLM. The agent is permitted one self-correction retry to fix syntax errors before failing.
+
+4. **Result-Grounded Answer Formatting:**
+   * In [groq_agent.py](docker/agent/agent/groq_agent.py), the answer-formatting prompt requires the LLM to write a concise response based *entirely* on the returned markdown data table.
+   * **Factual Constraint:** If the result table is empty, the LLM is explicitly forbidden from inventing numbers or guessing; it must report that no matching data was found.
+   * **No Generic Recommendations:** When generating business recommendations, the prompt mandates that every bullet point must reference a specific number, category, or customer from the query results.
 
 ```bash
 # Run 5 sample questions
